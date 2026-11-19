@@ -1,0 +1,4 @@
+C:/Users/marco/source/repos/GP_CPP20_B/out/build/x64-debug/CMakeFiles/gp_b.dir
+C:/Users/marco/source/repos/GP_CPP20_B/out/build/x64-debug/CMakeFiles/test.dir
+C:/Users/marco/source/repos/GP_CPP20_B/out/build/x64-debug/CMakeFiles/edit_cache.dir
+C:/Users/marco/source/repos/GP_CPP20_B/out/build/x64-debug/CMakeFiles/rebuild_cache.dir
