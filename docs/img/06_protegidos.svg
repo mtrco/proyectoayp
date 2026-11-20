@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="430" viewBox="0 0 880 430" role="img" aria-label="Crossover y mutación protegidos por profundidad">
+<title>Crossover y mutación protegidos por profundidad</title>
+<style>
+text { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
+.bg { fill: #fcfcfb; }
+.card { fill: #f4f3ef; stroke: #e2e1dc; }
+.t { fill: #0b0b0b; }
+.t2 { fill: #52514e; }
+.t3 { fill: #7a7974; }
+.edge { stroke: #9b9a94; stroke-width: 2; fill: none; }
+.edge2 { stroke: #c9c8c2; stroke-width: 2; fill: none; }
+.grid { stroke: #e6e5e0; stroke-width: 1; }
+.axis { stroke: #b9b8b2; stroke-width: 1; }
+.op { fill: #6366f1; } .opt { fill: #ffffff; }
+.var { fill: #3fb874; } .vart { fill: #08321b; }
+.cst { fill: #d3d4de; } .cstt { fill: #23242a; }
+.fold { fill: #f6c445; } .foldt { fill: #3a2a00; }
+.s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; }
+.s1s { stroke: #2a78d6; } .s2s { stroke: #eb6834; } .s3s { stroke: #1baf7a; }
+.o1 { fill: #86b6ef; } .o2 { fill: #2a78d6; } .o3 { fill: #184f95; }
+.ring { fill: none; stroke-width: 3; }
+.dash { fill: none; stroke-width: 2; stroke-dasharray: 6 5; }
+.hl { fill: #eb6834; fill-opacity: 0.10; stroke: #eb6834; stroke-width: 2; stroke-dasharray: 6 5; }
+.hlb { fill: #2a78d6; fill-opacity: 0.08; stroke: #2a78d6; stroke-width: 2; stroke-dasharray: 6 5; }
+.good { fill: #0ca30c; } .bad { fill: #d03b3b; }
+.goods { stroke: #0ca30c; } .bads { stroke: #d03b3b; }
+.cell { fill: #ffffff; stroke: #cfcec8; }
+.arrow { stroke: #7a7974; stroke-width: 2; fill: none; marker-end: url(#ah); }
+.ah { fill: #7a7974; }
+@media (prefers-color-scheme: dark) {
+  .bg { fill: #1a1a19; }
+  .card { fill: #242423; stroke: #3a3a37; }
+  .t { fill: #f0efec; }
+  .t2 { fill: #c3c2b7; }
+  .t3 { fill: #9d9c95; }
+  .edge { stroke: #8f8e88; }
+  .edge2 { stroke: #4a4a46; }
+  .grid { stroke: #2f2f2d; }
+  .axis { stroke: #55554f; }
+  .op { fill: #7c7ff5; }
+  .var { fill: #2f9e63; } .vart { fill: #ecfff3; }
+  .cst { fill: #55565f; } .cstt { fill: #f2f2f6; }
+  .fold { fill: #c99a1c; } .foldt { fill: #1d1500; }
+  .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; }
+  .s1s { stroke: #3987e5; } .s2s { stroke: #d95926; } .s3s { stroke: #199e70; }
+  .o1 { fill: #184f95; } .o2 { fill: #3987e5; } .o3 { fill: #86b6ef; }
+  .hl { fill: #d95926; stroke: #d95926; }
+  .hlb { fill: #3987e5; stroke: #3987e5; }
+  .cell { fill: #20201f; stroke: #45453f; }
+  .arrow { stroke: #9d9c95; }
+  .ah { fill: #9d9c95; }
+}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+<rect width="880" height="430" rx="14" class="bg"/>
+<text x="28.0" y="38.0" class="t" font-size="19" text-anchor="start" font-weight="700" >Versiones protegidas: el hijo nunca supera max_depth</text>
+<rect x="20.0" y="66.0" width="410.0" height="346.0" rx="10" class="card" />
+<text x="40.0" y="94.0" class="t" font-size="14" text-anchor="start" font-weight="700" >Crossover protegido (max_depth = 3)</text>
+<rect x="216.0" y="224.0" width="40.0" height="92.0" rx="20" class="hl" />
+<line x1="173.0" y1="140.0" x2="131.0" y2="192.0" class="edge" />
+<line x1="173.0" y1="140.0" x2="215.0" y2="192.0" class="edge" />
+<line x1="131.0" y1="192.0" x2="110.0" y2="244.0" class="edge" />
+<line x1="131.0" y1="192.0" x2="152.0" y2="244.0" class="edge" />
+<line x1="215.0" y1="192.0" x2="194.0" y2="244.0" class="edge" />
+<line x1="215.0" y1="192.0" x2="236.0" y2="244.0" class="edge" />
+<line x1="236.0" y1="244.0" x2="236.0" y2="296.0" class="edge" />
+<circle cx="173.0" cy="140.0" r="15" class="op"/>
+<text x="173.0" y="145.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >+</text>
+<circle cx="131.0" cy="192.0" r="15" class="op"/>
+<text x="131.0" y="197.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >×</text>
+<circle cx="110.0" cy="244.0" r="15" class="var"/>
+<text x="110.0" y="248.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x1</text>
+<circle cx="152.0" cy="244.0" r="15" class="cst"/>
+<text x="152.0" y="248.7" class="cstt" font-size="13" text-anchor="middle" font-weight="500" >0.5</text>
+<circle cx="215.0" cy="192.0" r="15" class="op"/>
+<text x="215.0" y="197.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >−</text>
+<circle cx="194.0" cy="244.0" r="15" class="var"/>
+<text x="194.0" y="248.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x2</text>
+<circle cx="236.0" cy="244.0" r="15" class="op"/>
+<text x="236.0" y="249.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >√</text>
+<circle cx="236.0" cy="296.0" r="15" class="var"/>
+<text x="236.0" y="300.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x1</text>
+<text x="70.0" y="144.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >prof. 0</text>
+<text x="70.0" y="196.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >prof. 1</text>
+<text x="70.0" y="248.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >prof. 2</text>
+<text x="70.0" y="300.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >prof. 3</text>
+<text x="40.0" y="344.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >Cortar en i y poner el subárbol j del otro padre deja</text>
+<text x="40.0" y="362.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >al hijo con profundidad prof(i) + altura(j).</text>
+<text x="40.0" y="380.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >Se acepta si prof_A(i) + altura_B(j) ≤ max y al revés.</text>
+<text x="40.0" y="398.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >Hasta 128 intentos; si ninguno sirve, se intercambian raíces.</text>
+<text x="300.0" y="160.0" class="t" font-size="13" text-anchor="start" font-weight="600" >corte i: prof(i) = 2</text>
+<text x="300.0" y="182.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >admite altura(j) ≤ 1</text>
+<rect x="450.0" y="66.0" width="410.0" height="346.0" rx="10" class="card" />
+<text x="470.0" y="94.0" class="t" font-size="14" text-anchor="start" font-weight="700" >Mutación protegida (max_depth = 3)</text>
+<rect x="568.0" y="188.0" width="94.0" height="104.0" rx="22" class="hl" />
+<line x1="577.5" y1="150.0" x2="540.0" y2="210.0" class="edge" />
+<line x1="577.5" y1="150.0" x2="615.0" y2="210.0" class="edge" />
+<line x1="615.0" y1="210.0" x2="590.0" y2="270.0" class="edge" />
+<line x1="615.0" y1="210.0" x2="640.0" y2="270.0" class="edge" />
+<circle cx="577.5" cy="150.0" r="16" class="op"/>
+<text x="577.5" y="155.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >+</text>
+<circle cx="540.0" cy="210.0" r="16" class="var"/>
+<text x="540.0" y="214.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x1</text>
+<circle cx="615.0" cy="210.0" r="16" class="op"/>
+<text x="615.0" y="215.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >×</text>
+<circle cx="590.0" cy="270.0" r="16" class="var"/>
+<text x="590.0" y="274.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x2</text>
+<circle cx="640.0" cy="270.0" r="16" class="cst"/>
+<text x="640.0" y="274.7" class="cstt" font-size="13" text-anchor="middle" font-weight="500" >0.4</text>
+<text x="500.0" y="154.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >prof. 0</text>
+<text x="500.0" y="214.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >prof. 1</text>
+<text x="500.0" y="274.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >prof. 2</text>
+<text x="690.0" y="150.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >presupuesto =</text>
+<text x="690.0" y="170.0" class="t" font-size="13" text-anchor="start" font-weight="600" >max − prof(i) = 3 − 1 = 2</text>
+<line x1="690.0" y1="196.0" x2="690.0" y2="226.0" class="arrow" />
+<line x1="712.0" y1="250.0" x2="690.0" y2="298.0" class="edge" />
+<line x1="712.0" y1="250.0" x2="734.0" y2="298.0" class="edge" />
+<circle cx="712.0" cy="250.0" r="15" class="op"/>
+<circle cx="712.0" cy="250.0" r="19" class="ring s2s"/>
+<text x="712.0" y="255.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >−</text>
+<circle cx="690.0" cy="298.0" r="15" class="var"/>
+<circle cx="690.0" cy="298.0" r="19" class="ring s2s"/>
+<text x="690.0" y="302.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x3</text>
+<circle cx="734.0" cy="298.0" r="15" class="cst"/>
+<circle cx="734.0" cy="298.0" r="19" class="ring s2s"/>
+<text x="734.0" y="302.7" class="cstt" font-size="13" text-anchor="middle" font-weight="500" >−0.7</text>
+<text x="470.0" y="344.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >El subárbol nuevo sale de grow_random con una</text>
+<text x="470.0" y="362.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >profundidad al azar entre 0 y el presupuesto.</text>
+<text x="470.0" y="380.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >Cerca de la mitad de los nodos son hojas al fondo:</text>
+<text x="470.0" y="398.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >ahí el presupuesto es 0 y la hoja cambia por otra hoja.</text>
+</svg>

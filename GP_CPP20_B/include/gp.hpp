@@ -72,10 +72,16 @@ private:
 // La raiz se encuentra a profundidad cero.
 struct Node {
     Kind kind = Kind::Constant;
+    // true si el valor del nodo se LEE directamente, sin recorrer hijos: constantes,
+    // variables y subarboles sin variables ya plegados (su valor queda en `value`).
+    // Lo recalcula fitness en cada evaluacion; ocupa un byte del relleno (el nodo sigue
+    // midiendo 32 bytes).
+    bool direct = true;
     // Un nodo es constante O variable, nunca ambas: la union deja el nodo en 32 bytes
     // (antes 40), asi que hay menos memoria que copiar al clonar y caben mas nodos en cache.
+    // Los nodos internos no usan la union salvo para guardar su valor plegado.
     union {
-        double value = 0.0;          // Kind::Constant
+        double value = 0.0;          // Kind::Constant (o valor plegado de un nodo interno)
         std::size_t variable_index;  // Kind::Variable (0 -> x1)
     };
     std::unique_ptr<Node> left;
@@ -95,6 +101,7 @@ struct Node {
 
     // Copia el valor o el indice (la union completa, sin importar el tipo de nodo).
     void copy_payload_from(const Node& other) noexcept {
+        direct = other.direct;
         std::memcpy(&value, &other.value, sizeof(value));
     }
 
@@ -133,7 +140,10 @@ Tree grow_random(int max_depth, std::size_t variable_count,
 Tree grow_full(int exact_depth, std::size_t variable_count,
                std::mt19937_64& rng);
 
-double fitness(const Node& root, const Dataset& data);
+// MSE fila por fila. fold_constants = true pliega los subarboles sin variables antes de
+// evaluar (mismo resultado bit a bit). fitness no cambia el significado del arbol: solo
+// actualiza los campos `direct` y el valor plegado de sus nodos.
+double fitness(const Node& root, const Dataset& data, bool fold_constants = true);
 
 std::pair<Tree, Tree> crossover(const Node& a, const Node& b,
                                 std::mt19937_64& rng);
@@ -150,6 +160,9 @@ struct GPOptions {
     int max_depth = 5;
     std::size_t generations = 5; // El manual NO fija generaciones.
     std::uint64_t seed = 42;
+    // Optimizaciones exactas (el resultado del GP no cambia); --no-fold y --no-cut las apagan.
+    bool fold_constants = true; // plegar subarboles sin variables antes de evaluar
+    bool early_cut = true;      // dejar de evaluar un hijo que ya no puede quedar en el mejor 50%
 };
 
 struct GPResult {

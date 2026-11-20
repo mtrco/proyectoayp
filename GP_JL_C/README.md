@@ -1,51 +1,62 @@
 # Programacion Genetica (GP) - Implementacion C (alternativa), Julia 1.9+
 
-Version **NO CONVENCIONAL**: arboles **inmutables** que **comparten subarboles**, con
-**cache de resultados** en la evaluacion. Implementa todas las partes del manual
-(representacion, `expression`, `eval`, MSE, `grow_random`, `grow_full`, clonacion,
-crossover, mutacion, versiones protegidas, GP completo, benchmarks y pruebas). No usa
-paquetes externos.
+Version **NO CONVENCIONAL**: **toda la poblacion vive en un solo grafo guardado en
+arreglos**, los arboles **comparten subarboles** y la evaluacion usa un **cache de
+resultados**. Implementa todas las partes del manual (representacion, `expression`,
+`eval`, MSE, `grow_random`, `grow_full`, clonacion, crossover, mutacion, versiones
+protegidas, GP completo, benchmarks y pruebas). No usa paquetes externos.
 
-> **Estado:** este codigo se escribio sin poder ejecutar Julia; en el entorno donde se
-> preparo no habia Julia ni red para instalarlo. Antes de medir corre `--test`,
-> `tools/cross_check.jl` y `tools/verificar_con_b.jl`, y reporta cualquier error.
+Probado con Julia 1.13.4: `--test` (1,582 comprobaciones), `tools/cross_check.jl`
+(56,116 comprobaciones contra A, 0 fallos) y `tools/verificar_con_b.jl` (3,280 arboles
+contra B, 0 diferencias).
+
+La explicacion detallada, con diagramas, esta en [`../docs/README.md`](../docs/README.md).
 
 ### Reglas confirmadas por el profesor que definen este diseno
 
 | Idea | Respuesta del profesor | En esta version |
 |---|---|---|
 | Compartir subarboles en vez de copiarlos | Valido ("suena a una buena idea") | Si: copia de camino |
-| Toda la poblacion en un solo grafo con cache de resultados | Valido | Si: DAG + cache por nodo |
+| Toda la poblacion en un solo grafo con cache de resultados | Valido | Si: un grafo en arreglos + cache |
 | Evaluacion por lotes | **No valido** | No: se evalua **fila por fila** |
-| Arbol como arreglo postfijo | Valido, pero sin beneficio claro | Ya no se usa |
-| Paralelismo | No permitido | Un solo hilo |
-
-> La version anterior de C (arreglo postfijo + evaluacion por lotes) quedo descartada
-> porque usaba evaluacion por lotes. Sus tiempos no deben usarse en el reporte.
+| Arbol como arreglo postfijo | Valido, pero sin beneficio claro | No se usa |
+| Paralelismo | No permitido | Un solo hilo (el recolector de basura tambien: 1 hilo) |
 
 ## Idea central
 
 | | A y B (convencionales) | C (esta implementacion) |
 |---|---|---|
-| Nodos | Mutables; cada arbol es dueno de sus nodos | **Inmutables**; los subarboles se comparten entre individuos |
-| Metadatos | Se recorren para calcularlos | **Tamano y altura guardados en cada nodo** (O(1)) |
+| Nodos | Un objeto por nodo; cada arbol es dueno de sus nodos | **Registros de 24 bytes en un arreglo**; los hijos son indices de 32 bits |
+| Poblacion | Bosque de arboles independientes | **Un solo grafo** (DAG) de subarboles compartidos |
+| Metadatos | Se recorren para calcularlos | **Tamano, altura y mayor variable guardados en cada nodo** (O(1)) |
 | Clonar | Copia nodo por nodo | **Innecesario**: un nodo nunca cambia, compartirlo es seguro |
 | Crossover / mutacion | Clonar padres completos e intercambiar | **Copia de camino**: solo los nodos de la raiz al punto de corte |
-| Punto de corte | Lista de slots en preorden | Bajar por los tamanos hasta el k-esimo nodo en preorden, O(profundidad) |
 | Evaluacion | Recursiva, fila por fila | Recursiva, fila por fila, **con cache** en los nodos grandes |
-| Poblacion | Bosque de arboles independientes | **Grafo aciclico** (DAG) de subarboles compartidos |
+| Memoria | Recolector de basura (A) o asignador propio (B) | **Sin objetos por nodo**: el recolector de basura casi no trabaja |
 
-### 1. Nodos inmutables con metadatos
+### 1. Un grafo en arreglos (`Graph`, `NodeRec`, `Tree`)
 
-- `OpNode`: operador, hijos, tamano (`size`) y altura (`height`), calculados al crearlo en
-  O(1) a partir de los hijos. Ademas lleva el cache de resultados.
-- `VarNode`: hay **una sola instancia por variable** (x1, x2, ...), compartida por todos.
-- `ConstNode`: constante.
+- `NodeRec` (24 bytes, sin punteros): hijos izquierdo y derecho (indices `Int32`; en una
+  variable, `left` es su indice), tamano, altura, tipo, una bandera de plegado y `value`
+  (la constante, el valor plegado o, en los demas nodos internos, el mayor indice de
+  variable del subarbol).
+- `Graph`: el `Vector{NodeRec}` con todos los nodos, una instancia compartida de cada
+  variable y, en arreglos paralelos, el cache de resultados.
+- `Tree`: (grafo, indice de la raiz). Copiar un `Tree` no copia nodos.
+- Antes cada nodo era un objeto de Julia: en profundidad 12 la poblacion inicial tenia
+  ~13 millones de objetos y **la mitad del tiempo era recoleccion de basura**. Ahora son
+  registros dentro de un arreglo y la recoleccion es practicamente cero.
+- `full_gp` y `benchmark_crossover` usan un grafo propio; el resto usa `DEFAULT_GRAPH`.
+- Corridas largas: cuando el cache ocupa el doble de `--cache-mb`, el grafo se compacta
+  (se copian solo los arboles vivos, conservando lo que comparten). No cambia el resultado.
 
-Como ningun operador modifica un nodo, los padres nunca cambian. Por eso `clone(arbol)`
-devuelve el mismo arbol; para las pruebas hay `deep_copy_tree`.
+### 2. Arboles en preorden
 
-### 2. Copia de camino (path copying)
+Al generar un arbol, el registro del padre se reserva antes que los de sus hijos: el
+arbol nuevo queda en memoria en el orden en que se recorre, y el hijo izquierdo esta
+justo despues del padre. El generador se consume igual que en A.
+
+### 3. Copia de camino (path copying)
 
 - El k-esimo nodo en preorden se encuentra bajando por los tamanos de los hijos, en
   O(profundidad).
@@ -56,22 +67,56 @@ devuelve el mismo arbol; para las pruebas hay `deep_copy_tree`.
   `prof_A(i) + altura_B(j) <= max` y `prof_B(j) + altura_A(i) <= max`. Es la misma regla
   que A y B: 128 intentos y, si ninguno sirve, intercambio de raices.
 
-### 3. Evaluacion fila por fila con cache de resultados
+### 4. Evaluacion fila por fila con cache de resultados
 
 - Para cada fila i se recorre el arbol recursivamente, como en el manual. No hay
   evaluacion por lotes.
-- Los nodos con tamano >= S guardan su resultado para cada fila. Si el cache de un nodo
-  esta completo para el dataset en uso, el nodo devuelve el valor guardado sin recorrer
-  su subarbol.
-- Un hijo comparte casi todo con sus padres, que ya estan evaluados. Solo se calculan los
-  nodos nuevos del camino y los subarboles pequenos (tamano < S) que cuelgan de el.
-- El cache vive en el nodo: cuando ningun individuo usa ya ese nodo, el recolector de
-  basura de Julia lo libera junto con su cache.
-- **S se elige solo** para que el cache de la poblacion quepa aproximadamente en
-  `--cache-mb` megabytes (1024 por defecto). Con un dataset de muchas filas, S crece.
+- Los nodos con tamano >= S guardan su resultado en cada fila (en bloques de 8 MB, no en
+  un objeto por nodo). Si el cache de un nodo esta completo para el dataset en uso, el
+  nodo devuelve el valor guardado sin recorrer su subarbol.
+- Un hijo comparte casi todo con sus padres, ya evaluados: solo se calculan los nodos
+  nuevos del camino y los subarboles pequenos (tamano < S) que cuelgan de el.
+- **Subarboles pequenos sin revisar cache y sin saltos**: debajo de S ningun nodo tiene
+  cache, asi que se usa un evaluador aparte que no lo revisa; elige el operador con
+  `ifelse` (se calculan + - * / y se toma uno) y lee las hojas sin saltos. Se le pasa el
+  indice del nodo, no su registro (pasar el registro obliga a copiarlo en cada llamada).
+- **S automatico**: 16, o 32 en profundidad >= 11 (lo mas rapido medido: llenar el cache
+  de la poblacion inicial cuesta), y mas grande si el cache no cabe en `--cache-mb`.
   `--cache-min-size=K` lo fija a mano; `--cache-mb=0` desactiva el cache.
 - **El resultado no cambia**: mismas operaciones, en el mismo orden y sumando fila por
   fila como A y B. El MSE es identico bit a bit con y sin cache.
+- El indice de variable se valida una vez por arbol (el mayor esta guardado en la raiz).
+
+### 5. Plegado de constantes (`--no-fold` lo apaga)
+
+Un nodo cuyo subarbol no tiene variables (por ejemplo `(sqrt(0.25) + 0.1)`) calcula su
+valor al crearse, con las mismas operaciones protegidas, y lo guarda en `value`. La
+evaluacion lo lee sin recorrer el subarbol. `expression`, tamano, profundidad y puntos de
+corte no cambian, y el MSE es identico bit a bit.
+
+### 6. Corte temprano exacto (`--no-cut` lo apaga)
+
+Solo sobrevive el mejor 50% de los hijos. Un monticulo guarda los N/2 mejores MSE de los
+hijos ya evaluados; si el MSE parcial de un hijo (suma/n) ya supera al (N/2)-esimo mejor,
+ese hijo terminaria peor que N/2 hijos y nunca sobreviviria: se deja de evaluar y recibe
++infinito. Los sobrevivientes conservan su MSE exacto; con el orden estable del
+reemplazo, el GP es identico al de A (que no usa corte).
+
+### Resultado medido (mismo resultado, menos tiempo)
+
+Contenedor Linux, Julia 1.13.4 `-O3`, un hilo, `data/ejemplo.csv`, mediana de 3 semillas;
+"antes" = version anterior de C (objetos inmutables + cache por nodo, commit 4561dac):
+
+| Profundidad | GP antes (s) | GP ahora (s) | Crossover antes (us) | Crossover ahora (us) |
+|---|---|---|---|---|
+| 7 | 0.63 | 0.40 | 1.88 | 1.05 |
+| 9 | 1.29 | 0.84 | 2.88 | 2.00 |
+| 10 | - | - | 4.42 | 2.27 |
+| 12 | 6.01 | 2.83 | 5.00 | 3.01 |
+| 15 | - | - | 7.88 | 7.09 |
+
+En profundidad 12, antes la poblacion inicial tardaba ~6.1 s, de ellos ~2.6 s de
+recoleccion de basura; ahora ~2.1 s y practicamente sin recoleccion.
 
 ### Mismo comportamiento que A
 
@@ -104,9 +149,14 @@ julia --startup-file=no -O3 main.jl --bench-gp --data=data\DATASET_OFICIAL.csv -
 |---|---|
 | `--batch-pairs=K` | Parejas de padres en memoria a la vez en el benchmark de crossover. `0` (por defecto) = los 10,000 arboles a la vez, protocolo acordado; `2500` = 5,000 a la vez |
 | `--cache-mb=M` | Presupuesto aproximado del cache del GP, en MB (1024 por defecto; 0 = sin cache) |
-| `--cache-min-size=K` | Tamano minimo de subarbol que guarda cache (0 = automatico segun `--cache-mb`) |
+| `--cache-min-size=K` | Tamano minimo de subarbol que guarda cache (0 = automatico) |
+| `--no-fold` | Sin plegado de constantes (mismo resultado) |
+| `--no-cut` | Sin corte temprano exacto (mismo resultado) |
 | `--eval-file --file=arboles.txt --data=...` | Lee expresiones (una por linea) e imprime MSE con 17 digitos, profundidad y nodos |
 | `--export-trees --count=N --depth=D --variables=V --seed=S [--full]` | Escribe arboles sin perdida (17 digitos) |
+
+`--no-fold` y `--no-cut` existen porque esas dos optimizaciones estaban pendientes de
+confirmar con el profesor. Si no las acepta, se apagan sin cambiar el resultado.
 
 Los benchmarks hacen primero una corrida pequena de calentamiento, para que **la
 compilacion JIT de Julia no se cuente en el tiempo**.
@@ -116,18 +166,18 @@ compilacion JIT de Julia no se cuente en el tiempo**.
 - Los 10,000 padres (`grow_full`) estan en memoria al mismo tiempo. Si no alcanza la RAM,
   se permiten 5,000 (`--batch-pairs=2500`). La columna `resident_trees` lo dice.
 - Se cronometra solo el crossover, incluida la creacion de los hijos (copia de camino).
-- Los hijos se sueltan cada 16 cruces y el recolector de basura corre fuera del cronometro.
-- **RAM:** los padres del benchmark se generan por separado y no comparten nada salvo las
-  variables. En profundidad 15 con 10,000 arboles calculo unos 4 a 5 GB (unos 48 bytes
-  por nodo interno y 16 por constante). No esta medido; revisalo con el Administrador de
-  tareas y usa `--batch-pairs=2500` si no alcanza.
+- Los hijos se sueltan cada 16 cruces, fuera del cronometro (se recorta el arreglo de
+  nodos a su tamano anterior).
+- **RAM:** 24 bytes por nodo. En profundidad 15 con 10,000 arboles (~15,200 nodos cada
+  uno) son unos 3.7 GB.
 
 ## Validacion de entradas
 
 - Los constructores rechazan codigos de operacion desconocidos, operadores con el numero
-  de hijos equivocado e indices de variable menores que 1.
-- `eval_row` y la evaluacion comprueban `indice <= numero de variables`. `Dataset` exige
-  filas de la misma longitud.
+  de hijos equivocado, hijos inexistentes e indices de variable menores que 1.
+- `fitness` comprueba una vez por arbol que sus variables existan en el dataset;
+  `eval_row` lo comprueba en cada acceso. `Dataset` exige filas de la misma longitud.
+- No se pueden mezclar en un crossover arboles de grafos distintos.
 - `full_gp` rechaza `generations < 0`, y la linea de comandos rechaza enteros negativos.
 - CSV: un campo vacio (por ejemplo "1,2,") es un error. La primera linea solo se toma como
   encabezado si ningun campo es numerico, igual que en A y B.
@@ -138,16 +188,25 @@ compilacion JIT de Julia no se cuente en el tiempo**.
 
 - `expression`, `eval_row`, MSE (incluida la tabla del manual), operadores protegidos,
   MSE = +Inf al desbordar y variables fuera de rango.
+- El registro de nodo mide 24 bytes y no tiene punteros.
+- El operador sin saltos da lo mismo, bit a bit, que el operador con saltos (incluidos
+  Inf, NaN, ceros y valores diminutos).
 - `grow_full` y `grow_random`: profundidades, todas las hojas a la profundidad exacta,
-  y que el tamano y la altura guardados en cada nodo sean los reales.
+  metadatos guardados = reales, y que los arboles nuevos esten en preorden.
 - Ida y vuelta texto <-> arbol sin perdida.
+- **Plegado:** valores y marcas en un ejemplo conocido, que no cambie `expression` ni el
+  tamano, que en 300 arboles cada subarbol plegado valga bit a bit lo mismo que recorrerlo
+  (y este plegado si y solo si no tiene variables), y que Inf - Inf siga dando +Inf.
 - **Cache:** el MSE con cache (tamanos minimos 1, 4 y 16), sin cache y la referencia
-  escalar son identicos bit a bit, en frio, en caliente y alternando entre dos datasets.
-  Los hijos evaluados con los subarboles de sus padres ya en cache dan el mismo MSE.
+  escalar son identicos bit a bit, en frio, en caliente, alternando dos datasets y con y
+  sin plegado. Los hijos evaluados con los subarboles de sus padres en cache dan el mismo MSE.
+- **Corte temprano:** si devuelve un numero, es el MSE exacto; +Inf solo si el MSE real
+  supera el corte.
 - **Copia de camino:** el crossover conserva el total de nodos, los metadatos de los
   hijos son correctos, solo se crean los nodos del camino y los padres no cambian.
 - Versiones protegidas: respetan `max_depth`, incluso al limite.
-- GP: elitismo, y el cache no altera el resultado.
+- GP: elitismo; el cache, el plegado, el corte temprano y la compactacion del grafo no
+  alteran la corrida.
 
 `tools/cross_check.jl` carga A y C en un solo proceso y comprueba:
 
@@ -167,7 +226,7 @@ arboles en los tres datasets. Compara el MSE bit a bit, la profundidad y el nume
 
 ## Archivos
 
-- `src/GPC.jl`: nodos, copia de camino, evaluacion con cache, operadores, GP, benchmark y pruebas.
+- `src/GPC.jl`: grafo, copia de camino, evaluacion con cache, operadores, GP, benchmark y pruebas.
 - `main.jl`: interfaz de terminal.
 - `tools/cross_check.jl`: verificacion cruzada A <-> C.
 - `tools/verificar_con_b.jl`: verificacion cruzada A, C <-> B.
@@ -175,10 +234,8 @@ arboles en los tres datasets. Compara el MSE bit a bit, la profundidad y el nume
 
 ## Mejoras pendientes (medir cada una por separado)
 
-1. Barrer `--cache-min-size` (por ejemplo 4, 8, 16, 32) con el dataset oficial.
-2. Unir subarboles identicos creados por separado (hash-consing), no solo los heredados.
-   Es la otra mitad de la idea de Handley; ahorra memoria, pero cuesta calcular hashes al
-   crear cada nodo.
-3. Guardar los resultados de subarboles sin variables como una constante (plegado de
-   constantes).
-4. Repetir los benchmarks con varias semillas y reportar media y desviacion.
+1. Barrer `--cache-min-size` (16, 32, 64) con el dataset oficial: el mejor S depende del
+   numero de filas.
+2. Unir subarboles identicos creados por separado (hash-consing). Medido en un modelo:
+   casi no hay repetidos, porque las constantes son aleatorias; ganancia esperada baja.
+3. Repetir los benchmarks con varias semillas y reportar media y desviacion.

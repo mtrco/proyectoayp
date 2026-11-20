@@ -6,9 +6,10 @@ jerarquia de tipos que propone: arboles, `expression`, `eval`, MSE, `grow_random
 GP completo, benchmarks y pruebas. No usa paquetes externos (solo `Random` y `Printf`,
 que vienen con Julia).
 
-> **Estado:** este codigo se escribio sin poder ejecutar Julia; en el entorno donde se
-> preparo no habia Julia ni red para instalarlo. Antes de usarlo corre `--test` y
-> `GP_JL_C/tools/cross_check.jl`, y reporta cualquier error.
+> **Estado:** probado con Julia 1.13.4: `--test` (1,116 comprobaciones) y
+> `GP_JL_C/tools/cross_check.jl` (A y C identicos). A es la referencia convencional de alto
+> nivel: no compite y no lleva las optimizaciones de B y C. La explicacion con diagramas de
+> las tres implementaciones esta en [`../docs/README.md`](../docs/README.md).
 
 ## Diseno
 
