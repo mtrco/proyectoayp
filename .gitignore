@@ -102,6 +102,5 @@ respaldo_*/
 # ---------------------------------------------------------------------------
 # Resultados de benchmarks
 # ---------------------------------------------------------------------------
-# Las carpetas resultados_* SI se suben, porque son la evidencia del reporte.
-# Si prefieren no subirlas, quiten el "#" de la siguiente linea:
-# resultados_*/
+# Las carpetas resultados_* que crea correr_benchmarks.ps1 no se suben.
+resultados_*/
