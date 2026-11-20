@@ -19,12 +19,23 @@ enum class Kind : std::uint8_t {
 
 // B: arbol CONVENCIONAL con nodos independientes y punteros propietarios.
 // La raiz se encuentra a profundidad cero.
+//
+// Optimizaciones que NO cambian la representacion (siguen siendo nodos enlazados
+// por punteros, cada uno dueno de sus hijos):
+//  - Campos ordenados para que el nodo ocupe 32 bytes en vez de 40.
+//  - Los nodos se reservan de un pool propio (operator new/delete de la clase):
+//    reservar y liberar un nodo es sacar o devolver un bloque de una lista libre,
+//    sin llamar a malloc/free. El pool NO es seguro entre hilos; el proyecto es de
+//    un solo hilo (el profesor no permite paralelismo).
 struct Node {
-    Kind kind = Kind::Constant;
-    double value = 0.0;
-    std::size_t variable_index = 0;
     std::unique_ptr<Node> left;
     std::unique_ptr<Node> right;
+    double value = 0.0;
+    std::uint32_t variable_index = 0;
+    Kind kind = Kind::Constant;
+
+    static void* operator new(std::size_t size);
+    static void operator delete(void* pointer, std::size_t size) noexcept;
 
     static std::unique_ptr<Node> constant(double value);
     static std::unique_ptr<Node> variable(std::size_t index);
@@ -109,5 +120,13 @@ CrossoverTiming benchmark_crossover(std::size_t trees, int depth,
 
 // Pruebas deterministas de todas las piezas importantes.
 void run_tests();
+
+// Estadisticas del pool de nodos (para el reporte de memoria).
+struct PoolStats {
+    std::size_t live_nodes = 0;      // nodos vivos ahora
+    std::size_t peak_nodes = 0;      // maximo de nodos vivos a la vez
+    std::size_t reserved_bytes = 0;  // memoria pedida al sistema por el pool
+};
+PoolStats pool_stats();
 
 } // namespace gp
