@@ -43,6 +43,12 @@ function synthetic(seed, rows, scale_choices)
 end
 
 function main()
+    help = read(`$GP_B --help`, String)
+    if !occursin("--export-trees", help) || !occursin("--eval-file", help)
+        println("Este gp_b no tiene --export-trees / --eval-file. Recompila B (x64-Release) con")
+        println("la version actual de src/main.cpp, src/gp.cpp e include/gp.hpp y vuelve a correr esto.")
+        exit(2)
+    end
     folder = mktempdir()
     paths = [("principal", DATA)]
     for (name, seed, rows, scales) in (("extremos", 2026, 97, (-13, -6, 0, 0, 4)),

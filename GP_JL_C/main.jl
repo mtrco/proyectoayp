@@ -1,5 +1,5 @@
 #!/usr/bin/env julia
-# Interfaz de terminal de la implementacion C (mismas opciones que A y B).
+# Interfaz de terminal de la implementacion C (mismas opciones que A y B, mas el cache).
 # Antes de cronometrar se ejecuta una corrida pequena de calentamiento, para que
 # el tiempo de compilacion JIT de Julia no se cuente en los benchmarks.
 
@@ -9,27 +9,26 @@ using Printf
 using Random
 
 const HELP = """
-GP C - Julia, implementacion alternativa (arreglo postfijo + evaluacion por lotes)
+GP C - Julia, implementacion alternativa (arboles inmutables compartidos + cache de resultados)
 
   julia main.jl --test [-v]
-  julia main.jl --demo [--data=data/ejemplo.csv] [--preorder]
+  julia main.jl --demo [--data=data/ejemplo.csv]
   julia main.jl --bench-crossover [--trees=10000] [--depths=7,9,10,12,15] [--variables=2]
-                                  [--seed=42] [--batch-pairs=0] [--preorder]
+                                  [--seed=42] [--batch-pairs=0]
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000] [--depths=7,9,12]
-                           [--generations=10] [--seed=42] [--block=64] [--preorder]
-  julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv] [--block=64]
+                           [--generations=10] [--seed=42] [--cache-mb=1024] [--cache-min-size=0]
+  julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
   julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=42] [--full]
 
---batch-pairs: parejas de padres en memoria a la vez en el benchmark de crossover
-               (0 = los 10000 arboles a la vez, protocolo acordado; 2500 = 5000).
---block:       filas del dataset por lote en la evaluacion.
---preorder:    elige los puntos de corte en preorden, como A (misma distribucion;
-               con la misma semilla reproduce exactamente las corridas de A).
+--batch-pairs:    parejas de padres en memoria a la vez en el benchmark de crossover
+                  (0 = los 10000 arboles a la vez, protocolo acordado; 2500 = 5000).
+--cache-mb:       presupuesto aproximado del cache de resultados del GP (0 = sin cache).
+--cache-min-size: tamano minimo de subarbol que guarda cache (0 = automatico segun --cache-mb).
 """
 
 const INT_OPTIONS = Set(["trees", "population", "generations", "variables", "seed",
-                         "batch-pairs", "count", "depth", "block"])
+                         "batch-pairs", "count", "depth", "cache-mb", "cache-min-size"])
 const STRING_OPTIONS = Set(["data", "depths", "file"])
 
 function parse_args(args)
@@ -37,19 +36,19 @@ function parse_args(args)
     o = Dict{String, Any}(
         "data" => joinpath(@__DIR__, "data", "ejemplo.csv"), "depths" => "", "file" => "",
         "trees" => 10000, "population" => 5000, "generations" => 10, "variables" => 2,
-        "seed" => 42, "batch-pairs" => 0, "count" => 100, "depth" => 5, "block" => 64,
-        "full" => false, "preorder" => false, "verbose" => false)
+        "seed" => 42, "batch-pairs" => 0, "count" => 100, "depth" => 5,
+        "cache-mb" => 1024, "cache-min-size" => 0, "full" => false, "verbose" => false)
     for arg in args[2:end]
         if arg == "--full"
             o["full"] = true
-        elseif arg == "--preorder"
-            o["preorder"] = true
         elseif arg == "-v"
             o["verbose"] = true
         elseif startswith(arg, "--") && occursin('=', arg)
             key, value = split(arg[3:end], '='; limit=2)
             if key in INT_OPTIONS
-                o[key] = parse(Int, value)
+                n = tryparse(Int, value)
+                (n === nothing || n < 0) && error("--$key requiere un entero no negativo: $value")
+                o[key] = n
             elseif key in STRING_OPTIONS
                 o[key] = String(value)
             else
@@ -67,7 +66,6 @@ parse_depths(text, default) = [parse(Int, strip(s)) for s in split(isempty(text)
 
 function main(args)
     mode, o = parse_args(args)
-    pick = o["preorder"] ? PREORDER : FAST
     if mode in ("--help", "-h")
         print(HELP)
     elseif mode == "--test"
@@ -76,34 +74,33 @@ function main(args)
     elseif mode == "--demo"
         data = read_csv(o["data"])
         result = full_gp(data, GPOptions(population_size=40, max_depth=4, generations=5,
-                                         seed=o["seed"], pick=pick))
+                                         seed=o["seed"]))
         @printf("MSE final: %.6g\n", result.best_fitness)
         println("Expresion: ", expression(result.best))
-        println("Postfijo:  ", postfix(result.best, 8))
         println("Mejor MSE por generacion:")
         for (i, v) in enumerate(result.best_fitness_per_generation)
             @printf("  Generacion %d: %.6g\n", i - 1, v)
         end
     elseif mode == "--bench-crossover"
-        benchmark_crossover(40, 3, o["variables"]; seed=1, pick=pick)  # calentamiento (JIT)
+        benchmark_crossover(40, 3, o["variables"]; seed=1)  # calentamiento (JIT)
         println("depth,trees,resident_trees,crossovers,elapsed_seconds,",
                 "mean_seconds_per_crossover,mean_nodes")
         for depth in parse_depths(o["depths"], "7,9,10,12,15")
             t = benchmark_crossover(o["trees"], depth, o["variables"]; seed=o["seed"],
-                                    batch_pairs=o["batch-pairs"], pick=pick)
+                                    batch_pairs=o["batch-pairs"])
             @printf("%d,%d,%d,%d,%.9g,%.9g,%.6g\n", t.depth, t.trees, t.resident_trees,
                     t.crossovers, t.seconds, t.mean_seconds_per_crossover, t.mean_nodes_per_tree)
             flush(stdout)
         end
     elseif mode == "--bench-gp"
         data = read_csv(o["data"])
-        full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1,
-                                block=o["block"], pick=pick))  # calentamiento (JIT)
+        full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1))  # calentamiento
         println("depth,population,generations,elapsed_seconds,best_mse,best_expression")
         for depth in parse_depths(o["depths"], "7,9,12")
             options = GPOptions(population_size=o["population"], max_depth=depth,
                                 generations=o["generations"], seed=o["seed"],
-                                block=o["block"], pick=pick)
+                                cache_mb=o["cache-mb"], cache_min_size=o["cache-min-size"])
+            GC.gc()  # memoria de la corrida anterior, fuera del cronometro
             t0 = time_ns()
             result = full_gp(data, options)
             elapsed = (time_ns() - t0) / 1e9
@@ -114,12 +111,11 @@ function main(args)
     elseif mode == "--eval-file"
         isempty(o["file"]) && error("Falta --file=arboles.txt")
         data = read_csv(o["data"])
-        ws = Workspace(o["block"])
         for line in eachline(o["file"])
             line = rstrip(line, '\r')
             isempty(strip(line)) && continue
             p = parse_expression(line)
-            println(format_number(fitness(p, data, ws), 17), '\t', tree_depth(p), '\t',
+            println(format_number(fitness(p, data), 17), '\t', tree_depth(p), '\t',
                     node_count(p), '\t', line)
         end
     elseif mode == "--export-trees"

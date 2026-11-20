@@ -55,17 +55,43 @@ Tree grow_impl(int remaining_depth, std::size_t variable_count,
     return Node::binary(kind, std::move(left), std::move(right));
 }
 
-void collect_slots(Tree& root, std::vector<Tree*>& slots) {
-    slots.push_back(&root);
-    if (root->left) collect_slots(root->left, slots);
-    if (root->right) collect_slots(root->right, slots);
+// Clona `src` en `dest` y, en la MISMA pasada, registra en preorden (raiz,
+// izquierdo, derecho) cada lugar donde cuelga un subarbol del clon. Antes esto
+// eran tres recorridos por arbol (clone, node_count para reservar y collect_slots).
+void clone_collect(Tree& dest, const Node& src, std::vector<Tree*>& slots) {
+    dest = std::make_unique<Node>();
+    dest->kind = src.kind;
+    dest->value = src.value;
+    dest->variable_index = src.variable_index;
+    slots.push_back(&dest);
+    if (src.left) clone_collect(dest->left, *src.left, slots);
+    if (src.right) clone_collect(dest->right, *src.right, slots);
 }
 
-void collect_slots_with_depth(Tree& root, int depth,
-                              std::vector<std::pair<Tree*, int>>& slots) {
-    slots.emplace_back(&root, depth);
-    if (root->left) collect_slots_with_depth(root->left, depth + 1, slots);
-    if (root->right) collect_slots_with_depth(root->right, depth + 1, slots);
+// Slot con la profundidad del nodo que cuelga ahi (raiz = 0) y la altura de su
+// subarbol (hoja = 0). Con ambos datos, cada intento del crossover protegido se
+// valida en O(1) en lugar de recorrer los dos hijos completos.
+struct ShapedSlot {
+    Tree* slot;
+    int depth;
+    int height;
+};
+
+// Igual que clone_collect, pero guarda profundidad y altura. Devuelve la altura de src.
+int clone_shape(Tree& dest, const Node& src, int depth, std::vector<ShapedSlot>& slots) {
+    dest = std::make_unique<Node>();
+    dest->kind = src.kind;
+    dest->value = src.value;
+    dest->variable_index = src.variable_index;
+    const std::size_t index = slots.size();
+    slots.push_back({&dest, depth, 0});
+    int height = 0;
+    if (src.left) height = clone_shape(dest->left, *src.left, depth + 1, slots) + 1;
+    if (src.right) {
+        height = std::max(height, clone_shape(dest->right, *src.right, depth + 1, slots) + 1);
+    }
+    slots[index].height = height;
+    return height;
 }
 
 Tree* choose_slot(std::vector<Tree*>& slots, std::mt19937_64& rng) {
@@ -165,13 +191,51 @@ std::vector<double> parse_numeric_row(const std::string& line) {
         const std::size_t last = field.find_last_not_of(" \t\r\n");
         field = field.substr(first, last - first + 1);
         std::size_t pos = 0;
-        const double value = std::stod(field, &pos);
+        double value = 0.0;
+        try {
+            value = std::stod(field, &pos);
+        } catch (const std::exception&) {
+            throw std::invalid_argument("Numero CSV invalido: " + field);
+        }
         if (pos != field.size() || !std::isfinite(value)) {
             throw std::invalid_argument("Numero CSV invalido: " + field);
         }
         result.push_back(value);
     }
+    // getline no reporta un ultimo campo vacio ("1,2,"): se detecta aparte.
+    const std::size_t last = line.find_last_not_of(" \t\r\n");
+    if (last != std::string::npos && line[last] == ',') {
+        throw std::invalid_argument("Campo CSV vacio al final de la linea");
+    }
     return result;
+}
+
+bool is_number_field(const std::string& raw) {
+    const std::size_t first = raw.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return false;
+    const std::size_t last = raw.find_last_not_of(" \t\r\n");
+    const std::string field = raw.substr(first, last - first + 1);
+    try {
+        std::size_t pos = 0;
+        std::stod(field, &pos);
+        return pos == field.size();
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+// La primera linea se toma como encabezado solo si NINGUN campo es numerico
+// (por ejemplo "x1,x2,y"). Una primera fila numerica mal formada es un error.
+bool looks_like_header(const std::string& line) {
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t comma = line.find(',', start);
+        const std::string field = line.substr(start, comma == std::string::npos
+                                                         ? std::string::npos : comma - start);
+        if (is_number_field(field)) return false;
+        if (comma == std::string::npos) return true;
+        start = comma + 1;
+    }
 }
 
 struct Individual {
@@ -287,7 +351,7 @@ Dataset Dataset::from_csv(const std::string& filename) {
             result.x.push_back(std::move(values));
         } catch (const std::exception& e) {
             // Permitir un encabezado en la primera linea, por ejemplo: x1,x2,y.
-            if (line_number == 1) continue;
+            if (line_number == 1 && looks_like_header(line)) continue;
             throw std::runtime_error("CSV linea " + std::to_string(line_number)
                                      + ": " + e.what());
         }
@@ -348,14 +412,15 @@ double fitness(const Node& root, const Dataset& data) {
 
 std::pair<Tree, Tree> crossover(const Node& a, const Node& b,
                                 std::mt19937_64& rng) {
-    Tree child_a = clone(a);
-    Tree child_b = clone(b);
-    std::vector<Tree*> slots_a;
-    std::vector<Tree*> slots_b;
-    slots_a.reserve(node_count(*child_a));
-    slots_b.reserve(node_count(*child_b));
-    collect_slots(child_a, slots_a);
-    collect_slots(child_b, slots_b);
+    // Buffers reutilizados entre llamadas: sin reservar memoria para los slots.
+    thread_local std::vector<Tree*> slots_a;
+    thread_local std::vector<Tree*> slots_b;
+    slots_a.clear();
+    slots_b.clear();
+    Tree child_a;
+    Tree child_b;
+    clone_collect(child_a, a, slots_a);
+    clone_collect(child_b, b, slots_b);
     // Orden explicito: el orden de evaluacion de argumentos no esta definido en C++.
     Tree* selected_a = choose_slot(slots_a, rng);
     Tree* selected_b = choose_slot(slots_b, rng);
@@ -366,10 +431,10 @@ std::pair<Tree, Tree> crossover(const Node& a, const Node& b,
 Tree mutation(const Node& parent, std::size_t variable_count,
               std::mt19937_64& rng, int new_subtree_max_depth) {
     ensure_depth_argument(new_subtree_max_depth);
-    Tree result = clone(parent);
-    std::vector<Tree*> slots;
-    slots.reserve(node_count(*result));
-    collect_slots(result, slots);
+    thread_local std::vector<Tree*> slots;
+    slots.clear();
+    Tree result;
+    clone_collect(result, parent, slots);
     const int replacement_depth = random_integer<int>(rng, 0, new_subtree_max_depth);
     Tree replacement = grow_random(replacement_depth, variable_count, rng);
     *choose_slot(slots, rng) = std::move(replacement);
@@ -379,26 +444,30 @@ Tree mutation(const Node& parent, std::size_t variable_count,
 std::pair<Tree, Tree> depth_protected_crossover(
     const Node& a, const Node& b, int max_depth, std::mt19937_64& rng) {
     ensure_depth_argument(max_depth);
-    if (tree_depth(a) > max_depth || tree_depth(b) > max_depth) {
+    thread_local std::vector<ShapedSlot> slots_a;
+    thread_local std::vector<ShapedSlot> slots_b;
+    slots_a.clear();
+    slots_b.clear();
+    Tree child_a;
+    Tree child_b;
+    const int height_a = clone_shape(child_a, a, 0, slots_a);
+    const int height_b = clone_shape(child_b, b, 0, slots_b);
+    if (height_a > max_depth || height_b > max_depth) {
         throw std::invalid_argument("Un padre supera max_depth");
     }
-    Tree child_a = clone(a);
-    Tree child_b = clone(b);
-    std::vector<Tree*> slots_a;
-    std::vector<Tree*> slots_b;
-    slots_a.reserve(node_count(*child_a));
-    slots_b.reserve(node_count(*child_b));
-    collect_slots(child_a, slots_a);
-    collect_slots(child_b, slots_b);
 
+    // Cambiar el subarbol i de A por el j de B deja al hijo A con profundidad
+    // max(resto de A, prof_A(i) + altura_B(j)); el resto de A ya cabe porque el
+    // padre cabe. Por eso esta condicion equivale EXACTAMENTE a intercambiar y
+    // medir tree_depth de ambos hijos (lo que se hacia antes): mismos intentos,
+    // mismo consumo del generador y mismos hijos, sin recorrer los arboles.
     for (int attempt = 0; attempt < 128; ++attempt) {
-        Tree* selected_a = choose_slot(slots_a, rng);
-        Tree* selected_b = choose_slot(slots_b, rng);
-        std::swap(*selected_a, *selected_b);
-        if (tree_depth(*child_a) <= max_depth && tree_depth(*child_b) <= max_depth) {
+        const ShapedSlot& x = slots_a[random_integer<std::size_t>(rng, 0, slots_a.size() - 1)];
+        const ShapedSlot& y = slots_b[random_integer<std::size_t>(rng, 0, slots_b.size() - 1)];
+        if (x.depth + y.height <= max_depth && y.depth + x.height <= max_depth) {
+            std::swap(*x.slot, *y.slot);
             return {std::move(child_a), std::move(child_b)};
         }
-        std::swap(*selected_a, *selected_b); // Deshacer intento invalido.
     }
     // Intercambiar las raices completas siempre respeta el limite de ambos padres.
     std::swap(child_a, child_b);
@@ -408,17 +477,16 @@ std::pair<Tree, Tree> depth_protected_crossover(
 Tree depth_protected_mutation(const Node& parent, std::size_t variable_count,
                               int max_depth, std::mt19937_64& rng) {
     ensure_depth_argument(max_depth);
-    if (tree_depth(parent) > max_depth) {
+    thread_local std::vector<ShapedSlot> slots;
+    slots.clear();
+    Tree result;
+    if (clone_shape(result, parent, 0, slots) > max_depth) {
         throw std::invalid_argument("El padre supera max_depth");
     }
-    Tree result = clone(parent);
-    std::vector<std::pair<Tree*, int>> slots;
-    slots.reserve(node_count(*result));
-    collect_slots_with_depth(result, 0, slots);
-    const auto& selected = slots[random_integer<std::size_t>(rng, 0, slots.size() - 1)];
-    const int remaining = max_depth - selected.second;
+    const ShapedSlot& selected = slots[random_integer<std::size_t>(rng, 0, slots.size() - 1)];
+    const int remaining = max_depth - selected.depth;
     const int replacement_depth = random_integer<int>(rng, 0, remaining);
-    *selected.first = grow_random(replacement_depth, variable_count, rng);
+    *selected.slot = grow_random(replacement_depth, variable_count, rng);
     return result;
 }
 

@@ -55,7 +55,9 @@ function parse_args(args)
         elseif startswith(arg, "--") && occursin('=', arg)
             key, value = split(arg[3:end], '='; limit=2)
             if key in INT_OPTIONS
-                o[key] = parse(Int, value)
+                n = tryparse(Int, value)
+                (n === nothing || n < 0) && error("--$key requiere un entero no negativo: $value")
+                o[key] = n
             elseif key in STRING_OPTIONS
                 o[key] = String(value)
             else

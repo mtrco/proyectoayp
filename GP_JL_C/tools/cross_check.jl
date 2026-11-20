@@ -4,18 +4,19 @@
 #   julia tools/cross_check.jl [ruta/a/GP_JL_A] [dataset.csv]
 #
 # Por defecto busca A en ../GP_JL_A (carpetas hermanas) y usa data/ejemplo.csv.
-# A y C consumen el generador aleatorio en el mismo orden, asi que con la misma
-# semilla deben producir EXACTAMENTE los mismos arboles y, con C en modo
-# PREORDER, los mismos hijos de crossover/mutacion y la misma corrida del GP.
+# A y C consumen el generador aleatorio en el mismo orden y eligen el punto de
+# corte en preorden, asi que con la misma semilla deben producir EXACTAMENTE los
+# mismos arboles, los mismos hijos de crossover/mutacion y la misma corrida del GP.
 # Comprueba:
 #   1. Mismos arboles (grow_full y grow_random) para 40 semillas, profundidades
 #      0-9 y 1-4 variables, y el mismo estado final del generador.
 #   2. Conversion A -> texto -> C -> texto sin perdida; mismos nodos y profundidad.
 #   3. evaluate/eval_row y MSE identicos bit a bit en tres datasets (ejemplo, uno
-#      con ceros, negativos y magnitudes extremas y uno que desborda), y para
-#      varios tamanos de bloque de C.
-#   4. crossover, mutation y sus versiones protegidas: mismos hijos (C PREORDER).
-#   5. GP completo: mismo historial del mejor MSE y mismo mejor arbol (C PREORDER).
+#      con ceros, negativos y magnitudes extremas y uno que desborda), con el
+#      cache de C desactivado y con varios tamanos minimos, en frio y en caliente.
+#   4. crossover, mutation y sus versiones protegidas: mismos hijos, y su MSE
+#      (con los subarboles compartidos ya en cache en C) identico al de A.
+#   5. GP completo: mismo historial del mejor MSE y mismo mejor arbol, con y sin cache.
 
 const ROOT_C = normpath(joinpath(@__DIR__, ".."))
 const ROOT_A = length(ARGS) >= 1 ? ARGS[1] : normpath(joinpath(ROOT_C, "..", "GP_JL_A"))
@@ -80,7 +81,7 @@ for (name, xs, ys) in datasets
     nv = length(xs[1])
     da = A.Dataset(xs, ys)
     dc = C.dataset_from_rows(xs, ys)
-    workspaces = [C.Workspace(b) for b in (1, 7, 64, 256)]
+    cache_sizes = (typemax(Int), 1, 4, 16)  # sin cache y varios tamanos minimos
     infinite = 0
     for t in 1:400
         tree = isodd(t) ? A.grow_random(t % 11, rand(rng, 1:nv), rng) :
@@ -97,36 +98,41 @@ for (name, xs, ys) in datasets
         end
         mse = A.fitness(tree, da)
         infinite += isinf(mse)
-        for ws in workspaces
-            check(mse === C.fitness(p, dc, ws), "[$name] MSE bit a bit, bloque=$(ws.block)")
+        for S in cache_sizes, _ in 1:2  # dos veces: en frio y en caliente
+            check(mse === C.fitness(p, dc, S), "[$name] MSE bit a bit, cache_min_size=$S")
         end
     end
     println("[2-3] $name: 400 arboles, $infinite con MSE = +Inf")
 end
 println("[2-3] texto, eval y MSE: ", checks[] - before, " comprobaciones, ", failures[], " fallos")
 
-# --- 4. operadores geneticos (C en modo PREORDER) ------------------------------
+# --- 4. operadores geneticos ----------------------------------------------------
 same(x, y) = A.expression(x, 17) == C.expression(y, 17)
 before = checks[]
+xs4, ys4 = load_rows(DATA)
+da4, dc4 = A.Dataset(xs4, ys4), C.dataset_from_rows(xs4, ys4)
+nv4 = length(xs4[1])
+same_mse(x, y) = A.fitness(x, da4) === C.fitness(y, dc4, 1)
 for seed in 1:60
     ra, rc = Xoshiro(seed), Xoshiro(seed)
     depth = 2 + seed % 6
-    a1, a2 = A.grow_full(depth, 2, ra), A.grow_random(depth, 2, ra)
-    c1, c2 = C.grow_full(depth, 2, rc), C.grow_random(depth, 2, rc)
+    a1, a2 = A.grow_full(depth, nv4, ra), A.grow_random(depth, nv4, ra)
+    c1, c2 = C.grow_full(depth, nv4, rc), C.grow_random(depth, nv4, rc)
     check(same(a1, c1) && same(a2, c2), "padres iguales seed=$seed")
+    check(same_mse(a1, c1) && same_mse(a2, c2), "MSE de los padres seed=$seed")  # llena el cache de C
     for _ in 1:5
         x1, x2 = A.crossover(a1, a2, ra)
-        y1, y2 = C.crossover(c1, c2, rc; pick=C.PREORDER)
+        y1, y2 = C.crossover(c1, c2, rc)
         check(same(x1, y1) && same(x2, y2), "crossover seed=$seed")
-        check(same(A.mutation(a1, 2, ra), C.mutation(c1, 2, rc; pick=C.PREORDER)),
-              "mutation seed=$seed")
+        check(same_mse(x1, y1) && same_mse(x2, y2), "MSE de los hijos de crossover seed=$seed")
+        xm, ym = A.mutation(a1, nv4, ra), C.mutation(c1, nv4, rc)
+        check(same(xm, ym) && same_mse(xm, ym), "mutation seed=$seed")
         md = depth + 1
         x1, x2 = A.depth_protected_crossover(a1, a2, md, ra)
-        y1, y2 = C.depth_protected_crossover(c1, c2, md, rc; pick=C.PREORDER)
+        y1, y2 = C.depth_protected_crossover(c1, c2, md, rc)
         check(same(x1, y1) && same(x2, y2), "crossover protegido seed=$seed")
-        check(same(A.depth_protected_mutation(a1, 2, md, ra),
-                   C.depth_protected_mutation(c1, 2, md, rc; pick=C.PREORDER)),
-              "mutacion protegida seed=$seed")
+        xm, ym = A.depth_protected_mutation(a1, nv4, md, ra), C.depth_protected_mutation(c1, nv4, md, rc)
+        check(same(xm, ym) && same_mse(xm, ym), "mutacion protegida seed=$seed")
     end
     check(rand(ra, UInt64) == rand(rc, UInt64), "mismo consumo del generador (operadores)")
 end
@@ -138,16 +144,16 @@ xs, ys = load_rows(DATA)
 da, dc = A.Dataset(xs, ys), C.dataset_from_rows(xs, ys)
 for seed in 1:4, depth in (3, 5, 7)
     ra = A.full_gp(da, A.GPOptions(population_size=200, max_depth=depth, generations=6, seed=seed))
-    rc = C.full_gp(dc, C.GPOptions(population_size=200, max_depth=depth, generations=6, seed=seed,
-                                   pick=C.PREORDER))
+    rc = C.full_gp(dc, C.GPOptions(population_size=200, max_depth=depth, generations=6, seed=seed))
     check(ra.best_fitness_per_generation == rc.best_fitness_per_generation,
           "GP historial seed=$seed depth=$depth")
     check(A.expression(ra.best, 17) == C.expression(rc.best, 17) &&
           ra.best_fitness === rc.best_fitness, "GP mejor arbol seed=$seed depth=$depth")
-    fast = C.full_gp(dc, C.GPOptions(population_size=200, max_depth=depth, generations=6,
-                                     seed=seed))
-    check(C.tree_depth(fast.best) <= depth && issorted(fast.best_fitness_per_generation; rev=true),
-          "GP modo FAST valido seed=$seed depth=$depth")
+    nocache = C.full_gp(dc, C.GPOptions(population_size=200, max_depth=depth, generations=6,
+                                        seed=seed, cache_min_size=typemax(Int)))
+    check(nocache.best_fitness_per_generation == rc.best_fitness_per_generation &&
+          C.expression(nocache.best, 17) == C.expression(rc.best, 17),
+          "GP de C igual con y sin cache seed=$seed depth=$depth")
 end
 println("[5] GP completo: ", checks[] - before, " comprobaciones, ", failures[], " fallos")
 

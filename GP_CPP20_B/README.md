@@ -118,10 +118,45 @@ de los mismos arboles bit a bit entre las tres implementaciones.
 - `data/ejemplo.csv`: datos ilustrativos, no oficiales.
 - `CMakeLists.txt`: proyecto CMake para Visual Studio/GCC/Clang.
 
+## Optimizacion de crossover y mutacion (resultados identicos)
+
+- **Clonar y recolectar en una pasada.** Antes, cada padre se recorria tres veces:
+  `clone`, `node_count` para reservar el vector de slots, y `collect_slots`. Ahora se
+  clona y se registran los slots en preorden en un solo recorrido, y los vectores de
+  slots se reutilizan entre llamadas.
+- **Crossover protegido en O(1) por intento.** Antes, cada uno de los hasta 128
+  intentos intercambiaba los subarboles y volvia a medir `tree_depth` de los dos hijos.
+  Ahora cada slot guarda la profundidad del nodo y la altura de su subarbol, y el
+  intento `i <-> j` es valido si `prof_A(i) + altura_B(j) <= max` y
+  `prof_B(j) + altura_A(i) <= max`. Esa condicion es exactamente equivalente a la
+  anterior: mismos intentos, mismo consumo del generador y mismos hijos.
+- **Verificado:** `--test` pasa; `cross_check` (B contra C++ C, que reproduce a B con
+  `--preorder`) da 43,930 comprobaciones y 0 fallos; y `--bench-gp` da el mismo mejor MSE
+  y la misma expresion que antes en las profundidades 7, 9 y 12.
+- **Medido** en el mismo contenedor Linux (g++ 13.3 `-O3`, un hilo), con los 10,000 padres
+  en memoria; en profundidad 15, con 5,000:
+
+| Profundidad | Crossover antes (us) | Crossover ahora (us) | GP completo antes (s) | GP completo ahora (s) |
+|---|---|---|---|---|
+| 7 | 13.4-14.2 | 9.0 | 0.99 | 0.86 |
+| 9 | 46.1-47.4 | 30.4-30.8 | 3.27 | 3.03 |
+| 10 | 78.7-82.3 | 60.7-62.7 | - | - |
+| 12 | 247-258 | 230-238 | 36.9 | 35.4 |
+| 15 | 1,620 | 1,017 | - | - |
+
+## Validacion de entradas (no afecta el tiempo medido)
+
+- Los argumentos numericos de la linea de comandos deben ser enteros no negativos
+  escritos solo con digitos. Antes, `std::stoull("-1")` daba 18446744073709551615.
+- CSV: una coma al final de la linea ("1,2,") es un error. La primera linea solo se toma
+  como encabezado si **ningun** campo es numerico (por ejemplo `x1,x2,y`); una primera
+  fila numerica mal formada ya no se descarta en silencio. A y C (Julia) siguen la misma regla.
+
 ## Limitaciones / mejoras propuestas
 
 1. Esta es una version correcta de referencia funcional, **no la mas rapida posible**.
-2. La clonacion usa `std::make_unique` por nodo; un pool/arena podria ser mas rapido.
+2. La clonacion usa `std::make_unique` por nodo; un pool/arena podria ser mas rapido
+   (en profundidad 15 es ahora el costo dominante del crossover).
 3. El crossover protegido prueba hasta 128 cortes y puede terminar en intercambio
    de raices; esta estrategia es valida en profundidad, pero puede reducir diversidad.
 4. Generaciones son parametrizables; el manual no define una cifra.

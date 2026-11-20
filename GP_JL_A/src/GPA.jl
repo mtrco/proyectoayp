@@ -268,14 +268,20 @@ function read_csv(path::AbstractString)
     rows = Vector{Vector{Float64}}()
     y = Float64[]
     columns = 0
-    for (line_number, line) in enumerate(eachline(path))
+    # readlines lee y CIERRA el archivo antes de procesarlo: si una linea es invalida y se
+    # lanza un error, el archivo no queda abierto (en Windows impediria borrarlo).
+    for (line_number, line) in enumerate(readlines(path))
         isempty(strip(line)) && continue
+        fields = [strip(f) for f in split(line, ',')]
+        parsed = [tryparse(Float64, f) for f in fields]
+        # Encabezado solo si NINGUN campo es numerico (p. ej. x1,x2,y), igual que B.
+        # Una primera fila numerica mal formada es un error, no un encabezado.
+        line_number == 1 && all(isnothing, parsed) && continue
         values = Float64[]
         why = ""
-        for field in split(line, ',')
-            v = tryparse(Float64, strip(field))
+        for (field, v) in zip(fields, parsed)
             if v === nothing || !isfinite(v)
-                why = "numero invalido: $(strip(field))"
+                why = isempty(field) ? "campo vacio" : "numero invalido: $field"
                 break
             end
             push!(values, v)
@@ -287,10 +293,7 @@ function read_csv(path::AbstractString)
             columns == 0 && (columns = length(values))
             length(values) == columns || (why = "columnas inconsistentes")
         end
-        if !isempty(why)
-            line_number == 1 && continue  # encabezado, por ejemplo: x1,x2,y
-            error("CSV linea $line_number: $why")
-        end
+        isempty(why) || error("CSV linea $line_number: $why")
         push!(y, pop!(values))
         push!(rows, values)
     end
@@ -504,6 +507,7 @@ function full_gp(data::Dataset, options::GPOptions)
     (N >= 4 && N % 4 == 0) ||
         throw(ArgumentError("population_size debe ser multiplo de 4 y >= 4"))
     _check_depth(options.max_depth)
+    options.generations >= 0 || throw(ArgumentError("generations debe ser >= 0"))
     rng = Xoshiro(options.seed)
     nvars, max_depth = nvariables(data), options.max_depth
 
@@ -645,6 +649,15 @@ function _throws(f)
     end
 end
 
+function _throws_any(f)
+    try
+        f()
+        return false
+    catch
+        return true
+    end
+end
+
 "Pruebas deterministas de todas las piezas. Devuelve cuantas comprobaciones pasaron."
 function run_tests(; verbose::Bool=false)
     passed = Ref(0)
@@ -761,6 +774,16 @@ function run_tests(; verbose::Bool=false)
           "padre que supera max_depth es rechazado")
 
     # --- Parte 4: GP completo ---------------------------------------------------
+    check(_throws(() -> full_gp(exact, GPOptions(generations=-1))), "generaciones negativas rechazadas")
+    for (text, header_ok) in (("x1,x2,y\n1,2,3\n", true), ("1,abc,3\n4,5,6\n", false),
+                              ("x1,x2,y\n1,2,\n", false))
+        mktemp() do path, io
+            write(io, text)
+            close(io)
+            check(header_ok ? nrows(read_csv(path)) == 1 : _throws_any(() -> read_csv(path)),
+                  "lector CSV: $(repr(text))")
+        end
+    end
     run = full_gp(exact, GPOptions(population_size=24, max_depth=3, generations=3))
     h = run.best_fitness_per_generation
     check(length(h) == 4, "historial de fitness")

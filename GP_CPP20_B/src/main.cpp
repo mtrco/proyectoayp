@@ -28,6 +28,15 @@ struct Args {
     std::uint64_t seed = 42;
 };
 
+// std::stoull acepta "-1" y lo convierte en 18446744073709551615: se exige un
+// entero sin signo escrito solo con digitos.
+std::uint64_t parse_unsigned(const std::string& key, const std::string& value) {
+    if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos) {
+        throw std::invalid_argument(key + " requiere un entero no negativo: " + value);
+    }
+    return std::stoull(value);
+}
+
 Args parse_args(int argc, char** argv) {
     Args opts;
     if (argc > 1) opts.mode = argv[1];
@@ -43,14 +52,14 @@ Args parse_args(int argc, char** argv) {
         if (key == "--data") opts.data = value;
         else if (key == "--depths") opts.depths = value;
         else if (key == "--file") opts.file = value;
-        else if (key == "--count") opts.count = std::stoull(value);
+        else if (key == "--count") opts.count = parse_unsigned(key, value);
         else if (key == "--depth") opts.depth = std::stoi(value);
-        else if (key == "--trees") opts.trees = std::stoull(value);
-        else if (key == "--population") opts.population = std::stoull(value);
-        else if (key == "--generations") opts.generations = std::stoull(value);
-        else if (key == "--variables") opts.variables = std::stoull(value);
-        else if (key == "--seed") opts.seed = std::stoull(value);
-        else if (key == "--batch-pairs") opts.batch_pairs = std::stoull(value);
+        else if (key == "--trees") opts.trees = parse_unsigned(key, value);
+        else if (key == "--population") opts.population = parse_unsigned(key, value);
+        else if (key == "--generations") opts.generations = parse_unsigned(key, value);
+        else if (key == "--variables") opts.variables = parse_unsigned(key, value);
+        else if (key == "--seed") opts.seed = parse_unsigned(key, value);
+        else if (key == "--batch-pairs") opts.batch_pairs = parse_unsigned(key, value);
         else throw std::invalid_argument("Opcion desconocida: " + key);
     }
     return opts;

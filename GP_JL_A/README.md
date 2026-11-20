@@ -46,13 +46,17 @@ Node (abstracto)          expression(n), evaluate(n, x)  (el eval del manual), c
   reemplazo con el mejor 50% actual + el mejor 50% de los descendientes.
 - MSE: menor es mejor; un resultado no finito vale +Inf.
 - Sin paralelismo: un solo hilo (regla confirmada por el profesor).
+- Entradas: `full_gp` rechaza `generations < 0`, la linea de comandos rechaza enteros
+  negativos, y en el CSV la primera linea solo se toma como encabezado si ningun campo es
+  numerico (igual que en B y C). Un campo vacio es un error.
 
 ### Generador aleatorio y verificacion
 
 A usa `Random.Xoshiro`. **C (en Julia) consume el generador exactamente en el mismo
-orden**, asi que con la misma semilla genera los mismos arboles. Con C en modo
-`--preorder`, ademas, obtiene los mismos hijos y la misma corrida completa del GP. Eso
-permite comparar A y C sin depender de la entrada ni de la salida.
+orden y elige el punto de corte en preorden como A**, asi que con la misma semilla genera
+los mismos arboles, los mismos hijos y la misma corrida completa del GP, aunque su
+representacion (arboles inmutables compartidos con cache) sea distinta. Eso permite
+comparar A y C sin depender de la entrada ni de la salida.
 
 B (C++) usa `std::mt19937_64` y no puede reproducir la misma secuencia. Con B se compara
 el **mismo arbol** evaluado por las tres implementaciones: `expression(arbol, 17)` es
@@ -72,8 +76,8 @@ julia main.jl --demo
 ## Uso
 
 ```powershell
-julia -O3 main.jl --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
-julia -O3 main.jl --bench-gp --data=data\DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
+julia --startup-file=no -O3 --threads=1 --gcthreads=1 main.jl --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
+julia --startup-file=no -O3 --threads=1 --gcthreads=1 main.jl --bench-gp --data=data\DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
 julia main.jl --eval-file --file=arboles.txt --data=data\ejemplo.csv
 julia main.jl --export-trees --count=100 --depth=6 --variables=2 --seed=1 [--full]
 ```

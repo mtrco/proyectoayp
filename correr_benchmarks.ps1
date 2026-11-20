@@ -52,7 +52,7 @@ $CMain = (Resolve-Path (Join-Path $C "main.jl")).Path
 $CDir = (Resolve-Path $C).Path
 $ADir = (Resolve-Path $A).Path
 if (Test-Path $Data) { $Data = (Resolve-Path $Data).Path }
-$JuliaFlags = @("--startup-file=no", "-O3")
+$JuliaFlags = @("--startup-file=no", "-O3")  
 
 $ramGB = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
 if ($ParesEnMemoria -lt 0) {
@@ -126,7 +126,6 @@ if (-not $SoloCrossover) {
                     "--generations=$Generations", "--seed=$s")
         Invoke-Bench "B" $B $common $s "$out\gp_B.csv"
         Invoke-Bench "C" $Julia ($JuliaFlags + $CMain + $common) $s "$out\gp_C.csv"
-        Invoke-Bench "C_preorder" $Julia ($JuliaFlags + $CMain + $common + "--preorder") $s "$out\gp_C_preorder.csv"
         if ($IncluirA) { Invoke-Bench "A" $Julia ($JuliaFlags + $AMain + $common) $s "$out\gp_A.csv" }
     }
 }
