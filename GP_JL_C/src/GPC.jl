@@ -1,44 +1,51 @@
 """
 Programacion Genetica (GP) - Implementacion C (alternativa, no convencional), Julia 1.9+.
 
-Idea: los arboles son INMUTABLES y comparten subarboles. Ambas cosas las aprobo el
-profesor ("compartir subarboles en vez de copiarlos" y "toda la poblacion en un solo
-grafo con cache de resultados"). La evaluacion por lotes NO esta permitida, asi que
-se evalua fila por fila, como en el manual.
+Idea: TODA la poblacion vive en UN SOLO GRAFO guardado en arreglos, con subarboles
+compartidos y cache de resultados. Ambas cosas las aprobo el profesor ("compartir
+subarboles en vez de copiarlos" y "toda la poblacion en un solo grafo con cache de
+resultados"). La evaluacion por lotes NO esta permitida: se evalua fila por fila, como
+en el manual. No hay paralelismo: un solo hilo.
 
-1. Nodos inmutables con metadatos. Cada nodo interno guarda su operador, sus hijos,
-   su tamano (numero de nodos) y su altura, calculados al crearlo en O(1). Un nodo
-   nunca se modifica, asi que los padres no pueden alterarse: compartir es seguro.
-   Las variables x1..xn existen una sola vez y se reutilizan.
+1. Un grafo en arreglos. Cada nodo es un registro de 24 bytes (`NodeRec`) dentro de un
+   `Vector{NodeRec}`; sus hijos son INDICES de 32 bits, no punteros a objetos. Un arbol
+   es (grafo, indice de su raiz). No hay un objeto de Julia por nodo, asi que el
+   recolector de basura no tiene millones de objetos que revisar (antes, en profundidad
+   12, la mitad del tiempo de la poblacion inicial era recoleccion de basura).
+   Los nodos nunca se modifican despues de creados: compartirlos es seguro.
 
-2. Copia de camino (path copying). El k-esimo nodo en preorden se encuentra bajando
-   por los tamanos, en O(profundidad). Un hijo de crossover o de mutacion crea solo
-   los nodos del camino de la raiz al punto de corte; el resto se COMPARTE con el
-   padre. En profundidad 15 son unos 16 nodos nuevos por hijo, no unos 15,000.
-   La poblacion entera es un grafo aciclico (DAG) de subarboles compartidos.
+2. Arboles en preorden. Al generar un arbol, el registro del padre se reserva antes que
+   los de sus hijos, asi que un arbol nuevo queda en memoria en el orden en que se
+   recorre (raiz, izquierdo, derecho): el hijo izquierdo esta justo despues del padre.
 
-3. Evaluacion fila por fila con cache. Para cada fila i se recorre el arbol
-   recursivamente. Los nodos con tamano >= S guardan su resultado en cada fila (su
-   cache). Un nodo cuyo cache esta completo para el dataset en uso devuelve el valor
-   guardado sin bajar mas. Como un hijo comparte casi todo con sus padres, ya
-   evaluados, solo se calculan los nodos nuevos del camino y los subarboles pequenos
-   (tamano < S) que cuelgan de el. El cache de un nodo se libera cuando el nodo deja
-   de usarse (lo recoge el recolector de basura de Julia). S se elige segun un
-   presupuesto de memoria (cache_mb).
+3. Copia de camino. Un hijo de crossover o de mutacion crea solo los nodos del camino de
+   la raiz al punto de corte (a lo mas uno por nivel); todo lo demas se comparte.
 
-Mismas reglas que A y B, y MISMO consumo del generador aleatorio que A, con el punto
-de corte elegido uniforme en preorden como en A. Con la misma semilla, C produce
-EXACTAMENTE los mismos arboles, los mismos hijos y la misma corrida del GP que A
-(ver tools/cross_check.jl). Un solo hilo: el profesor no permite paralelismo.
+4. Evaluacion fila por fila con cache. Los nodos con tamano >= S guardan su resultado en
+   cada fila en un bloque grande de memoria. Un hijo comparte casi todo con sus padres
+   (ya evaluados): solo se calculan los nodos nuevos del camino y los subarboles pequenos
+   que cuelgan de el. Debajo de S se usa un evaluador sin cache y sin saltos para elegir
+   el operador (se calculan + - * / y se elige con `ifelse`).
+
+5. Plegado de constantes. Un nodo cuyo subarbol no tiene variables guarda su valor al
+   crearse (mismas operaciones protegidas): la evaluacion lo lee sin recorrerlo.
+
+6. Corte temprano exacto. Solo sobrevive el mejor 50% de los hijos; un hijo cuyo MSE
+   parcial ya supera al (N/2)-esimo mejor deja de evaluarse (nunca sobreviviria).
+
+Todo esto da EXACTAMENTE el mismo resultado: mismas operaciones IEEE en el mismo orden.
+C consume el generador aleatorio en el mismo orden que A y elige el punto de corte
+uniforme en preorden como A, asi que con la misma semilla produce los mismos arboles,
+los mismos hijos y la misma corrida del GP (ver tools/cross_check.jl).
 """
 module GPC
 
 using Random
 using Printf
 
-export Node, OpNode, VarNode, ConstNode, AnyNode, Dataset,
+export Tree, Graph, Dataset,
        expression, parse_expression, format_number, node_count, tree_depth, clone,
-       eval_row, fitness, read_csv, dataset_from_rows, nvariables, nrows, variable,
+       eval_row, fitness, read_csv, dataset_from_rows, nvariables, nrows,
        grow_random, grow_full, crossover, mutation,
        depth_protected_crossover, depth_protected_mutation, auto_cache_min_size,
        GPOptions, GPResult, full_gp, CrossoverTiming, benchmark_crossover, run_tests
@@ -48,8 +55,11 @@ const PROTECTED_ATTEMPTS = 128   # igual que A y B
 const CHILDREN_CHUNK = 16        # benchmark: hijos liberados cada 16 cruces
 const DEFAULT_CACHE_MIN_SIZE = 16
 const NO_CACHE = typemax(Int)    # cache_min_size que desactiva el cache
+const BLOCK_VALUES = 1 << 20     # valores Float64 por bloque de cache (8 MB)
 
-# Codigos de operacion de los nodos internos (mismo orden que A y B al sortear).
+# Tipos de nodo. Los operadores tienen el mismo orden que A y B al sortearlos.
+const K_CONST = 0x00
+const K_VAR = 0x01
 const OP_ADD = 0x02
 const OP_SUB = 0x03
 const OP_MUL = 0x04
@@ -57,6 +67,7 @@ const OP_DIV = 0x05
 const OP_SQRT = 0x06
 const RANDOM_OPS = (OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_SQRT)
 const BINARY_BY_CHAR = Dict('+' => OP_ADD, '-' => OP_SUB, '*' => OP_MUL, '/' => OP_DIV)
+const FOLDED = 0x01              # bandera: subarbol sin variables, valor ya calculado
 
 _symbol(op::UInt8) = op == OP_ADD ? "+" : op == OP_SUB ? "-" : op == OP_MUL ? "*" :
                      op == OP_DIV ? "/" : "sqrt"
@@ -64,11 +75,25 @@ _symbol(op::UInt8) = op == OP_ADD ? "+" : op == OP_SUB ? "-" : op == OP_MUL ? "*
 @inline protected_div(a::Float64, b::Float64) = a / (abs(b) < EPS ? EPS : b)
 @inline protected_sqrt(a::Float64) = sqrt(a < 0.0 ? 0.0 : a)
 
+"Operador binario con saltos (referencia, plegado y eval_row)."
 @inline function apply(op::UInt8, a::Float64, b::Float64)
     op == OP_ADD && return a + b
     op == OP_SUB && return a - b
     op == OP_MUL && return a * b
     return protected_div(a, b)
+end
+
+"""
+Operador binario SIN saltos: se calculan las cuatro operaciones y se elige una con
+`ifelse` (instruccion de seleccion, no un salto). En un arbol grande el procesador no
+puede adivinar la secuencia de operadores y cada fallo cuesta ~15-20 ciclos; calcular
+las cuatro cuesta menos. Mismas operaciones IEEE: resultado identico a `apply`.
+"""
+@inline function apply_select(op::UInt8, a::Float64, b::Float64)
+    d = a / ifelse(abs(b) < EPS, EPS, b)
+    r = ifelse(op == OP_ADD, a + b, a - b)
+    r = ifelse(op == OP_MUL, a * b, r)
+    return ifelse(op == OP_DIV, d, r)
 end
 
 const FMT8 = Printf.Format("%.8g")
@@ -83,83 +108,197 @@ function format_number(x::Float64, precision::Integer=8)
 end
 
 # ---------------------------------------------------------------------------
-# Representacion
+# Representacion: un grafo en arreglos
 # ---------------------------------------------------------------------------
-abstract type Node end
+"""
+Registro de un nodo (24 bytes, sin punteros: `isbits`).
 
-struct ConstNode <: Node
+- `left`, `right`: indices de los hijos (0 = no hay). En una variable, `left` es su
+  indice (1 -> x1).
+- `size`: nodos del subarbol (incluido este). `height`: altura (hoja = 0).
+- `kind`: K_CONST, K_VAR u operador. `flags`: FOLDED si el subarbol no tiene variables
+  y su valor ya esta calculado.
+- `value`: la constante; el valor plegado; o, en los demas nodos internos, el mayor
+  indice de variable del subarbol (para validar el dataset una vez por arbol, en O(1)).
+"""
+struct NodeRec
+    left::Int32
+    right::Int32
+    size::Int32
+    height::Int16
+    kind::UInt8
+    flags::UInt8
     value::Float64
 end
 
-# mutable (con campo constante) para que cada variable sea UN objeto compartido.
-mutable struct VarNode <: Node
-    const index::Int  # 1 -> x1
-    function VarNode(index::Integer)
-        index >= 1 || throw(ArgumentError("las variables empiezan en x1 (indice >= 1)"))
-        return new(Int(index))
-    end
+"""
+Grafo que contiene muchos arboles que comparten nodos. Los nodos solo se agregan al
+final y nunca cambian. El cache de resultados (opcional) vive en arreglos paralelos y en
+bloques grandes de Float64, no en un objeto por nodo.
+"""
+mutable struct Graph
+    nodes::Vector{NodeRec}
+    vars::Vector{Int32}             # nodo compartido de cada variable (0 = aun no existe)
+    fold::Bool                      # plegado de constantes al crear nodos
+    track::Bool                     # hay arreglos de cache por nodo
+    cache_id::Vector{Int32}         # dataset del cache: 0 = ninguno, -id = llenandose
+    cache_off::Vector{Int64}        # (bloque << 32) | inicio dentro del bloque
+    blocks::Vector{Vector{Float64}}
+    block_used::Int
+    cache_values::Int               # valores de cache reservados (para medir memoria)
+    filling::Vector{Int32}          # nodos cuyo cache se llena en la evaluacion actual
 end
 
-const EMPTY_CACHE = Float64[]  # compartido; nunca se modifica (se reemplaza el campo)
+Graph(; fold::Bool=true) = Graph(NodeRec[], Int32[], fold, false, Int32[], Int64[],
+                                 Vector{Float64}[], 0, 0, Int32[])
 
-mutable struct OpNode <: Node
-    const size::Int32     # nodos del subarbol (incluido este)
-    const height::Int16   # altura del subarbol (hoja = 0)
-    const op::UInt8
-    const left::Union{OpNode, VarNode, ConstNode}
-    const right::Union{OpNode, VarNode, ConstNode, Nothing}  # nothing en sqrt
-    cache::Vector{Float64}  # resultado en cada fila del dataset `cache_id`
-    cache_id::Int           # id del dataset; 0 = sin cache; -id = llenandose
-    function OpNode(op::UInt8, left::Node, right::Union{Node, Nothing}=nothing)
-        (OP_ADD <= op <= OP_SQRT) || throw(ArgumentError("codigo de operacion invalido: $op"))
-        (op == OP_SQRT) == (right === nothing) ||
-            throw(ArgumentError("'$(_symbol(op))' requiere $(op == OP_SQRT ? 1 : 2) hijo(s)"))
-        s = 1 + nsize(left) + (right === nothing ? 0 : nsize(right))
-        h = 1 + max(nheight(left), right === nothing ? 0 : nheight(right))
-        return new(Int32(s), Int16(h), op, left, right, EMPTY_CACHE, 0)
-    end
+"Grafo por omision (arboles creados fuera de full_gp y benchmark_crossover)."
+const DEFAULT_GRAPH = Graph()
+
+"Un arbol: su grafo y el indice de su raiz. Copiarlo no copia nodos."
+struct Tree
+    g::Graph
+    i::Int32
 end
 
-const AnyNode = Union{OpNode, VarNode, ConstNode}
+@inline _isdirect(r::NodeRec) = r.kind <= K_VAR || (r.flags & FOLDED) != 0
+@inline _isconst(r::NodeRec) = r.kind == K_CONST || (r.flags & FOLDED) != 0
 
-@inline nsize(::Union{VarNode, ConstNode}) = 1
-@inline nsize(n::OpNode) = Int(n.size)
-@inline nheight(::Union{VarNode, ConstNode}) = 0
-@inline nheight(n::OpNode) = Int(n.height)
+"Mayor indice de variable del subarbol (0 = sin variables), en O(1)."
+@inline function _maxvar(r::NodeRec)::Int
+    r.kind == K_VAR && return Int(r.left)
+    _isconst(r) && return 0
+    return Int(r.value)
+end
 
+function _track!(g::Graph)
+    if !g.track
+        n = length(g.nodes)
+        g.cache_id = zeros(Int32, n)
+        g.cache_off = zeros(Int64, n)
+        g.track = true
+    end
+    return g
+end
+
+@inline function _push!(g::Graph, r::NodeRec)::Int32
+    push!(g.nodes, r)
+    if g.track
+        push!(g.cache_id, Int32(0))
+        push!(g.cache_off, Int64(0))
+    end
+    return Int32(length(g.nodes))
+end
+
+"Registro de un operador a partir de sus hijos: tamano, altura, plegado y variables."
+@inline function _op_record(g::Graph, op::UInt8, l::Int32, r::Int32)::NodeRec
+    nodes = g.nodes
+    L = @inbounds nodes[l]
+    if r == 0
+        folded = g.fold && _isconst(L)
+        value = folded ? protected_sqrt(L.value) : Float64(_maxvar(L))
+        return NodeRec(l, Int32(0), L.size + Int32(1), L.height + Int16(1), op,
+                       folded ? FOLDED : 0x00, value)
+    end
+    R = @inbounds nodes[r]
+    folded = g.fold && _isconst(L) && _isconst(R)
+    value = folded ? apply(op, L.value, R.value) : Float64(max(_maxvar(L), _maxvar(R)))
+    return NodeRec(l, r, L.size + R.size + Int32(1), max(L.height, R.height) + Int16(1), op,
+                   folded ? FOLDED : 0x00, value)
+end
+
+const_node(g::Graph, v::Float64) = _push!(g, NodeRec(Int32(0), Int32(0), Int32(1), Int16(0), K_CONST, 0x00, v))
+
+"Nodo de la variable x`index`: hay una sola instancia por grafo, compartida."
+function var_node(g::Graph, index::Integer)
+    index >= 1 || throw(ArgumentError("las variables empiezan en x1 (indice >= 1)"))
+    while length(g.vars) < index
+        push!(g.vars, Int32(0))
+    end
+    n = @inbounds g.vars[index]
+    if n == 0
+        n = _push!(g, NodeRec(Int32(index), Int32(0), Int32(1), Int16(0), K_VAR, 0x00, 0.0))
+        g.vars[index] = n
+    end
+    return n
+end
+
+"Nodo operador validado (para el lector de texto y las pruebas)."
+function op_node(g::Graph, op::UInt8, l::Integer, r::Integer=0)
+    (OP_ADD <= op <= OP_SQRT) || throw(ArgumentError("codigo de operacion invalido: $op"))
+    (op == OP_SQRT) == (r == 0) ||
+        throw(ArgumentError("'$(_symbol(op))' requiere $(op == OP_SQRT ? 1 : 2) hijo(s)"))
+    n = length(g.nodes)
+    (1 <= l <= n && 0 <= r <= n) || throw(ArgumentError("hijo inexistente en el grafo"))
+    return _push!(g, _op_record(g, op, Int32(l), Int32(r)))
+end
+
+"Suelta los nodos creados despues de `mark` (por ejemplo, los hijos del benchmark)."
+function _truncate!(g::Graph, mark::Int)
+    resize!(g.nodes, mark)
+    if g.track
+        resize!(g.cache_id, mark)
+        resize!(g.cache_off, mark)
+    end
+    for k in eachindex(g.vars)
+        g.vars[k] > mark && (g.vars[k] = 0)
+    end
+    return g
+end
+
+@inline _rec(t::Tree) = t.g.nodes[t.i]
 "Numero de nodos (O(1): se guarda en cada nodo)."
-node_count(n::Node) = nsize(n)
+node_count(t::Tree) = Int(_rec(t).size)
 "Profundidad del arbol, hoja sola = 0 (O(1): se guarda en cada nodo)."
-tree_depth(n::Node) = nheight(n)
+tree_depth(t::Tree) = Int(_rec(t).height)
 
 """
-Clonacion. Los nodos son inmutables, asi que compartirlos es seguro: ningun operador
+Clonacion. Los nodos nunca cambian, asi que compartirlos es seguro: ningun operador
 puede alterar a un padre. Por eso `clone` devuelve el mismo arbol (aprobado por el
 profesor). `deep_copy_tree` hace una copia nodo por nodo, solo para pruebas.
 """
-clone(n::Node) = n
-deep_copy_tree(n::Union{VarNode, ConstNode}) = n isa ConstNode ? ConstNode(n.value) : n
-deep_copy_tree(n::OpNode) = OpNode(n.op, deep_copy_tree(n.left),
-                                      n.right === nothing ? nothing : deep_copy_tree(n.right))
+clone(t::Tree) = t
+deep_copy_tree(t::Tree) = Tree(t.g, _deep_copy!(t.g, t.i))
+function _deep_copy!(g::Graph, n::Int32)::Int32
+    r = g.nodes[n]
+    r.kind == K_CONST && return const_node(g, r.value)
+    r.kind == K_VAR && return n
+    l = _deep_copy!(g, r.left)
+    rr = r.right == 0 ? Int32(0) : _deep_copy!(g, r.right)
+    return _push!(g, _op_record(g, r.kind, l, rr))
+end
 
-# Variables compartidas: una sola instancia por indice.
-const VARIABLES = VarNode[]
-function variable(index::Integer)
-    index >= 1 || throw(ArgumentError("las variables empiezan en x1 (indice >= 1)"))
-    while length(VARIABLES) < index
-        push!(VARIABLES, VarNode(length(VARIABLES) + 1))
+function _same_graph(a::Tree, b::Tree)
+    a.g === b.g || throw(ArgumentError("los dos arboles deben estar en el mismo grafo"))
+    return a.g
+end
+
+function expression(t::Tree, precision::Integer=8)
+    io = IOBuffer()
+    _expression(io, t.g.nodes, t.i, Int(precision))
+    return String(take!(io))
+end
+
+function _expression(io::IO, nodes::Vector{NodeRec}, n::Int32, precision::Int)
+    r = nodes[n]
+    if r.kind == K_CONST
+        print(io, format_number(r.value, precision))
+    elseif r.kind == K_VAR
+        print(io, 'x', r.left)
+    elseif r.kind == OP_SQRT
+        print(io, "sqrt(")
+        _expression(io, nodes, r.left, precision)
+        print(io, ')')
+    else
+        print(io, '(')
+        _expression(io, nodes, r.left, precision)
+        print(io, ' ', _symbol(r.kind), ' ')
+        _expression(io, nodes, r.right, precision)
+        print(io, ')')
     end
-    return @inbounds VARIABLES[index]
 end
 
-expression(n::ConstNode, precision::Integer=8) = format_number(n.value, precision)
-expression(n::VarNode, precision::Integer=8) = "x$(n.index)"
-function expression(n::OpNode, precision::Integer=8)
-    left = expression(n.left, precision)
-    n.op == OP_SQRT && return "sqrt(" * left * ")"
-    return "(" * left * " " * _symbol(n.op) * " " * expression(n.right::AnyNode, precision) * ")"
-end
-Base.show(io::IO, n::Node) = print(io, expression(n))
+Base.show(io::IO, t::Tree) = print(io, expression(t))
 
 # ---------------------------------------------------------------------------
 # Lectura del formato de texto comun
@@ -167,6 +306,7 @@ Base.show(io::IO, n::Node) = print(io, expression(n))
 mutable struct _Parser
     s::String
     pos::Int
+    g::Graph
 end
 
 _fail(p::_Parser, why) = throw(ArgumentError("Expresion invalida ($why) en posicion $(p.pos): $(p.s)"))
@@ -201,7 +341,7 @@ function _token!(p::_Parser)
     return String(codeunits(p.s)[start:p.pos-1])
 end
 
-function _parse_node!(p::_Parser)::AnyNode
+function _parse_node!(p::_Parser)::Int32
     _skip!(p)
     c = _peek(p)
     c == '\0' && _fail(p, "fin inesperado")
@@ -214,30 +354,30 @@ function _parse_node!(p::_Parser)::AnyNode
         p.pos += 1
         right = _parse_node!(p)
         _expect!(p, ')')
-        return OpNode(op, left, right)
+        return op_node(p.g, op, left, right)
     elseif _matches(p, "sqrt(")
         p.pos += 5
         child = _parse_node!(p)
         _expect!(p, ')')
-        return OpNode(OP_SQRT, child)
+        return op_node(p.g, OP_SQRT, child)
     elseif c == 'x'
         p.pos += 1
         index = tryparse(Int, _token!(p))
         (index === nothing || index < 1) && _fail(p, "variable invalida")
-        return variable(index)
+        return var_node(p.g, index)
     end
     value = tryparse(Float64, _token!(p))
     value === nothing && _fail(p, "numero invalido")
-    return ConstNode(value)
+    return const_node(p.g, value)
 end
 
 "Lee el formato de expression(): \"((x1 + -0.25) * sqrt(x2))\"."
-function parse_expression(text::AbstractString)::AnyNode
-    p = _Parser(String(text), 1)
-    tree = _parse_node!(p)
+function parse_expression(text::AbstractString; graph::Graph=DEFAULT_GRAPH)::Tree
+    p = _Parser(String(text), 1, graph)
+    root = _parse_node!(p)
     _skip!(p)
     p.pos <= ncodeunits(p.s) && _fail(p, "texto sobrante")
-    return tree
+    return Tree(graph, root)
 end
 
 # ---------------------------------------------------------------------------
@@ -245,6 +385,8 @@ end
 # ---------------------------------------------------------------------------
 const DATASET_COUNTER = Ref(0)
 
+# Un Dataset NO debe modificarse despues de crearse: el cache de los nodos se identifica
+# con `id`. El constructor copia los datos.
 struct Dataset
     rows::Vector{Vector{Float64}}
     y::Vector{Float64}
@@ -304,103 +446,158 @@ end
 # ---------------------------------------------------------------------------
 # Evaluacion fila por fila
 # ---------------------------------------------------------------------------
-"Referencia escalar sin cache: evalua el arbol en un vector de entrada."
-function eval_row(n::AnyNode, x::AbstractVector{Float64})::Float64
-    if n isa ConstNode
-        return n.value
-    elseif n isa VarNode
-        1 <= n.index <= length(x) || throw(ArgumentError("Indice de variable fuera del vector"))
-        return @inbounds x[n.index]
+"Referencia escalar sin cache, sin plegado y con saltos: evalua el arbol en un vector."
+eval_row(t::Tree, x::AbstractVector{Float64})::Float64 = _eval_row(t.g.nodes, t.i, x)
+
+function _eval_row(nodes::Vector{NodeRec}, n::Int32, x::AbstractVector{Float64})::Float64
+    r = nodes[n]
+    r.kind == K_CONST && return r.value
+    if r.kind == K_VAR
+        1 <= r.left <= length(x) || throw(ArgumentError("Indice de variable fuera del vector"))
+        return @inbounds x[r.left]
     end
-    m = n::OpNode
-    a = eval_row(m.left, x)
-    m.op == OP_SQRT && return protected_sqrt(a)
-    return apply(m.op, a, eval_row(m.right::AnyNode, x))
+    a = _eval_row(nodes, r.left, x)
+    r.kind == OP_SQRT && return protected_sqrt(a)
+    return apply(r.kind, a, _eval_row(nodes, r.right, x))
 end
 
-const FILLING = OpNode[]  # nodos cuyo cache se esta llenando en la evaluacion actual
+const ZERO_ROW = [0.0]  # fila de relleno para datasets sin variables
 
-# Valor del nodo en la fila i. Usa y llena el cache de los nodos con tamano >= S.
-function _eval(n::AnyNode, x::Vector{Float64}, i::Int, id::Int, rows::Int, S::Int)::Float64
-    if n isa ConstNode
-        return n.value
-    elseif n isa VarNode
-        n.index <= length(x) || throw(ArgumentError("Indice de variable fuera del vector"))
-        return @inbounds x[n.index]
+# Valor de un nodo que se lee directo (constante, variable o plegado), sin saltos: se
+# leen las dos posibilidades y se elige una con `ifelse`. x tiene al menos un elemento.
+@inline function _direct(r::NodeRec, x::Vector{Float64})::Float64
+    isvar = r.kind == K_VAR
+    v = @inbounds x[ifelse(isvar, r.left, Int32(1))]
+    return ifelse(isvar, v, r.value)
+end
+
+# Evaluador sin cache para subarboles pequenos (tamano < S): ninguno de sus nodos guarda
+# cache, asi que no hay nada que revisar. `n` es un operador que no se lee directo.
+# Se pasa el INDICE del nodo y no su registro: pasar el registro de 24 bytes obliga a
+# copiarlo en la pila en cada llamada (medido: 22% mas lento en profundidad 12).
+function _eval_small(nodes::Vector{NodeRec}, n::Int32, x::Vector{Float64})::Float64
+    r = @inbounds nodes[n]
+    L = @inbounds nodes[r.left]
+    a = _isdirect(L) ? _direct(L, x) : _eval_small(nodes, r.left, x)
+    r.kind == OP_SQRT && return protected_sqrt(a)
+    R = @inbounds nodes[r.right]
+    b = _isdirect(R) ? _direct(R, x) : _eval_small(nodes, r.right, x)
+    return apply_select(r.kind, a, b)
+end
+
+@inline function _cache_ref(g::Graph, n::Int32)
+    off = @inbounds g.cache_off[n]
+    return @inbounds(g.blocks[off >> 32]), Int(off & 0xffffffff)
+end
+
+function _new_slot!(g::Graph, rows::Int)::Int64
+    if isempty(g.blocks) || g.block_used + rows > length(g.blocks[end])
+        push!(g.blocks, Vector{Float64}(undef, max(BLOCK_VALUES, rows)))
+        g.block_used = 0
     end
-    m = n::OpNode
-    cid = m.cache_id
-    cid == id && return @inbounds m.cache[i]  # cache completo para este dataset
-    a = _eval(m.left, x, i, id, rows, S)
-    v = m.op == OP_SQRT ? protected_sqrt(a) :
-                          apply(m.op, a, _eval(m.right::AnyNode, x, i, id, rows, S))
-    if m.size >= S
-        if cid == -id                # se esta llenando en esta evaluacion
-            @inbounds m.cache[i] = v
-        elseif i == 1                # empieza a llenarse en la primera fila
-            m.cache = Vector{Float64}(undef, rows)
-            @inbounds m.cache[1] = v
-            m.cache_id = -id
-            push!(FILLING, m)
-        end
+    start = g.block_used
+    g.block_used += rows
+    g.cache_values += rows
+    return (Int64(length(g.blocks)) << 32) | Int64(start)
+end
+
+# Valor del nodo `n` (un operador que no se lee directo) en la fila i.
+# Usa y llena el cache de los nodos con tamano >= S.
+function _eval(g::Graph, n::Int32, x::Vector{Float64}, i::Int, id::Int32,
+               rows::Int, S::Int)::Float64
+    nodes = g.nodes
+    r = @inbounds nodes[n]
+    r.size < S && return _eval_small(nodes, n, x)
+    cid = @inbounds g.cache_id[n]
+    if cid == id  # cache completo para este dataset
+        block, start = _cache_ref(g, n)
+        return @inbounds block[start + i]
+    end
+    L = @inbounds nodes[r.left]
+    a = _isdirect(L) ? _direct(L, x) : _eval(g, r.left, x, i, id, rows, S)
+    if r.kind == OP_SQRT
+        v = protected_sqrt(a)
+    else
+        R = @inbounds nodes[r.right]
+        b = _isdirect(R) ? _direct(R, x) : _eval(g, r.right, x, i, id, rows, S)
+        v = apply_select(r.kind, a, b)
+    end
+    if cid == -id                # se esta llenando en esta evaluacion
+        block, start = _cache_ref(g, n)
+        @inbounds block[start + i] = v
+    elseif i == 1                # empieza a llenarse en la primera fila
+        @inbounds g.cache_off[n] = _new_slot!(g, rows)
+        block, start = _cache_ref(g, n)
+        @inbounds block[start + 1] = v
+        @inbounds g.cache_id[n] = -id
+        push!(g.filling, n)
     end
     return v
 end
 
-function _abandon_filling!()
-    for m in FILLING
-        m.cache = EMPTY_CACHE
-        m.cache_id = 0
+function _abandon_filling!(g::Graph)
+    for n in g.filling
+        @inbounds g.cache_id[n] = Int32(0)
     end
-    empty!(FILLING)
+    empty!(g.filling)
 end
 
 """
-MSE evaluando fila por fila (como el pseudocodigo del manual), con cache de
-resultados en los nodos de tamano >= cache_min_size (NO_CACHE lo desactiva).
-Mismas operaciones y mismo orden de suma que A y B: el MSE es identico bit a bit.
+MSE evaluando fila por fila (como el pseudocodigo del manual), con cache de resultados
+en los nodos de tamano >= cache_min_size (NO_CACHE lo desactiva). Mismas operaciones y
+mismo orden de suma que A y B: el MSE es identico bit a bit.
+
+Con `cut` finito, deja de evaluar en cuanto el MSE parcial (suma/n) supera `cut`: las
+filas restantes solo pueden sumar, asi que el MSE final seria mayor; devuelve +Inf.
 """
-function fitness(tree::AnyNode, data::Dataset, cache_min_size::Int=DEFAULT_CACHE_MIN_SIZE)::Float64
+function fitness(t::Tree, data::Dataset, cache_min_size::Integer=DEFAULT_CACHE_MIN_SIZE;
+                 cut::Float64=Inf)::Float64
+    g = _track!(t.g)
+    root = g.nodes[t.i]
+    width = nvariables(data)
+    # Indices de variable validados UNA vez por arbol (el mayor esta en la raiz).
+    _maxvar(root) <= width || throw(ArgumentError("Indice de variable fuera del vector"))
+    _abandon_filling!(g)  # por si una evaluacion anterior se interrumpio
     rows = nrows(data)
-    id = data.id
-    empty!(FILLING)
+    id = Int32(data.id)
+    S = Int(min(cache_min_size, typemax(Int32) + 1))
+    direct = _isdirect(root)
     total = 0.0
-    try
-        @inbounds for i in 1:rows
-            difference = data.y[i] - _eval(tree, data.rows[i], i, id, rows, cache_min_size)
-            squared = difference * difference
-            if !isfinite(squared)
-                _abandon_filling!()
-                return Inf
-            end
-            total += squared
-            if !isfinite(total)
-                _abandon_filling!()
-                return Inf
-            end
+    @inbounds for i in 1:rows
+        x = width == 0 ? ZERO_ROW : data.rows[i]
+        predicted = direct ? _direct(root, x) : _eval(g, t.i, x, i, id, rows, S)
+        difference = data.y[i] - predicted
+        squared = difference * difference
+        if !isfinite(squared)
+            _abandon_filling!(g)
+            return Inf
         end
-    catch
-        _abandon_filling!()
-        rethrow()
+        total += squared
+        if !isfinite(total) || total / rows > cut
+            _abandon_filling!(g)
+            return Inf
+        end
     end
-    for m in FILLING
-        m.cache_id = id  # cache completo para todas las filas
+    for n in g.filling
+        @inbounds g.cache_id[n] = id  # cache completo para todas las filas
     end
-    empty!(FILLING)
+    empty!(g.filling)
     return total / rows
 end
 
 """
-Tamano minimo de subarbol que guarda cache, para que el cache de la poblacion quepa
-aproximadamente en `cache_mb` megabytes (estimacion conservadora: poblacion +
-descendientes, arboles grow_full de profundidad max_depth).
+Tamano minimo de subarbol que guarda cache. Llenar el cache de la poblacion inicial
+cuesta (todos sus nodos son nuevos), y un S chico solo ahorra en las generaciones. El
+punto mas rapido medido esta en S = 16 (profundidades chicas) o 32 (profundidad >= 11),
+y S crece si el cache no cabe en `cache_mb` megabytes (estimacion conservadora:
+poblacion + descendientes, arboles grow_full de profundidad max_depth).
 """
 function auto_cache_min_size(population::Integer, max_depth::Integer, rows::Integer,
                              cache_mb::Integer)
     cache_mb <= 0 && return NO_CACHE
     budget = cache_mb * 2.0^20
     expected_nodes = sum(1.8^k for k in 0:max_depth)
-    S = 8
+    S = max_depth >= 11 ? 32 : 16
     while S < 2^20 && 2.0 * population * expected_nodes / S * rows * 8.0 > budget
         S *= 2
     end
@@ -412,50 +609,58 @@ end
 # ---------------------------------------------------------------------------
 @inline random_constant(rng::AbstractRNG) = 2.0 * rand(rng) - 1.0  # igual que A
 
-function _grow(remaining::Int, nvars::Int, rng::AbstractRNG, full::Bool)::AnyNode
+# El padre se reserva ANTES que sus hijos: el arbol queda en memoria en preorden. El
+# generador se consume igual que en A: operador, hijo izquierdo, hijo derecho.
+function _grow!(g::Graph, remaining::Int, nvars::Int, rng::AbstractRNG, full::Bool)::Int32
     if remaining == 0 || (!full && rand(rng, 0:3) == 0)
         if nvars == 0 || rand(rng, 0:1) == 0
-            return ConstNode(random_constant(rng))
+            return const_node(g, random_constant(rng))
         end
-        return variable(rand(rng, 1:nvars))
+        return var_node(g, rand(rng, 1:nvars))
     end
     op = RANDOM_OPS[rand(rng, 1:5)]
-    left = _grow(remaining - 1, nvars, rng, full)
-    op == OP_SQRT && return OpNode(op, left)
-    right = _grow(remaining - 1, nvars, rng, full)
-    return OpNode(op, left, right)
+    me = _push!(g, NodeRec(Int32(0), Int32(0), Int32(0), Int16(0), op, 0x00, 0.0))
+    left = _grow!(g, remaining - 1, nvars, rng, full)
+    right = op == OP_SQRT ? Int32(0) : _grow!(g, remaining - 1, nvars, rng, full)
+    @inbounds g.nodes[me] = _op_record(g, op, left, right)
+    return me
 end
 
 _check_depth(depth::Integer) = depth >= 0 || throw(ArgumentError("La profundidad debe ser >= 0"))
 
 "Arbol con profundidad de A LO MAS `depth`."
-function grow_random(depth::Integer, no_variables::Integer, rng::AbstractRNG)::AnyNode
+function grow_random(depth::Integer, no_variables::Integer, rng::AbstractRNG;
+                     graph::Graph=DEFAULT_GRAPH)::Tree
     _check_depth(depth)
-    return _grow(Int(depth), Int(no_variables), rng, false)
+    return Tree(graph, _grow!(graph, Int(depth), Int(no_variables), rng, false))
 end
 
 "Arbol cuyas hojas estan TODAS exactamente a profundidad `depth`."
-function grow_full(depth::Integer, no_variables::Integer, rng::AbstractRNG)::AnyNode
+function grow_full(depth::Integer, no_variables::Integer, rng::AbstractRNG;
+                   graph::Graph=DEFAULT_GRAPH)::Tree
     _check_depth(depth)
-    return _grow(Int(depth), Int(no_variables), rng, true)
+    return Tree(graph, _grow!(graph, Int(depth), Int(no_variables), rng, true))
 end
+
+"Nodos esperados de grow_full(depth): sum 1.8^k (operador binario 4/5, sqrt 1/5)."
+_expected_full_size(depth::Integer) = sum(1.8^k for k in 0:depth)
 
 # ---------------------------------------------------------------------------
 # Navegacion y copia de camino
 # ---------------------------------------------------------------------------
 "k-esimo nodo en PREORDEN (1 = raiz; luego subarbol izquierdo y derecho, como A) y su profundidad."
-function _node_at(root::AnyNode, k::Int)
-    n::AnyNode = root
+function _node_at(nodes::Vector{NodeRec}, root::Int32, k::Int)
+    n = root
     depth = 0
     while k > 1
-        m = n::OpNode
+        r = @inbounds nodes[n]
         k -= 1
-        left_size = nsize(m.left)
+        left_size = Int(@inbounds(nodes[r.left]).size)
         if k <= left_size
-            n = m.left
+            n = r.left
         else
             k -= left_size
-            n = m.right::AnyNode
+            n = r.right
         end
         depth += 1
     end
@@ -463,36 +668,40 @@ function _node_at(root::AnyNode, k::Int)
 end
 
 "Arbol igual a `n` con el k-esimo nodo (preorden) reemplazado por `sub`. Solo crea el camino."
-function _replace(n::AnyNode, k::Int, sub::AnyNode)::AnyNode
+function _replace!(g::Graph, n::Int32, k::Int, sub::Int32)::Int32
     k == 1 && return sub
-    m = n::OpNode
+    r = @inbounds g.nodes[n]
     k -= 1
-    left_size = nsize(m.left)
+    left_size = Int(@inbounds(g.nodes[r.left]).size)
     if k <= left_size
-        return OpNode(m.op, _replace(m.left, k, sub), m.right)
+        new_left = _replace!(g, r.left, k, sub)
+        return _push!(g, _op_record(g, r.kind, new_left, r.right))
     end
-    return OpNode(m.op, m.left, _replace(m.right::AnyNode, k - left_size, sub))
+    new_right = _replace!(g, r.right, k - left_size, sub)
+    return _push!(g, _op_record(g, r.kind, r.left, new_right))
 end
 
 # ---------------------------------------------------------------------------
 # Operadores geneticos (mismo consumo del generador que A)
 # ---------------------------------------------------------------------------
-"Intercambia un subarbol de cada padre. Los padres no cambian (son inmutables)."
-function crossover(a::AnyNode, b::AnyNode, rng::AbstractRNG)
-    i = rand(rng, 1:nsize(a))
-    j = rand(rng, 1:nsize(b))
-    sub_a, _ = _node_at(a, i)
-    sub_b, _ = _node_at(b, j)
-    return _replace(a, i, sub_b), _replace(b, j, sub_a)
+"Intercambia un subarbol de cada padre. Los padres no cambian (sus nodos son inmutables)."
+function crossover(a::Tree, b::Tree, rng::AbstractRNG)
+    g = _same_graph(a, b)
+    i = rand(rng, 1:node_count(a))
+    j = rand(rng, 1:node_count(b))
+    sub_a, _ = _node_at(g.nodes, a.i, i)
+    sub_b, _ = _node_at(g.nodes, b.i, j)
+    return Tree(g, _replace!(g, a.i, i, sub_b)), Tree(g, _replace!(g, b.i, j, sub_a))
 end
 
 "Reemplaza un subarbol por uno nuevo de grow_random."
-function mutation(parent::AnyNode, no_variables::Integer, rng::AbstractRNG,
+function mutation(parent::Tree, no_variables::Integer, rng::AbstractRNG,
                   new_subtree_max_depth::Integer=3)
     _check_depth(new_subtree_max_depth)
-    replacement = grow_random(rand(rng, 0:Int(new_subtree_max_depth)), no_variables, rng)
-    k = rand(rng, 1:nsize(parent))
-    return _replace(parent, k, replacement)
+    g = parent.g
+    replacement = _grow!(g, rand(rng, 0:Int(new_subtree_max_depth)), Int(no_variables), rng, false)
+    k = rand(rng, 1:node_count(parent))
+    return Tree(g, _replace!(g, parent.i, k, replacement))
 end
 
 """
@@ -500,32 +709,37 @@ Crossover cuyos hijos no superan max_depth: el intercambio i <-> j es valido si
 prof_A(i) + altura_B(j) <= max y prof_B(j) + altura_A(i) <= max (misma regla que A
 y B: 128 intentos y, si ninguno sirve, intercambio de raices).
 """
-function depth_protected_crossover(a::AnyNode, b::AnyNode, max_depth::Integer, rng::AbstractRNG)
+function depth_protected_crossover(a::Tree, b::Tree, max_depth::Integer, rng::AbstractRNG)
     _check_depth(max_depth)
-    (nheight(a) > max_depth || nheight(b) > max_depth) &&
+    (tree_depth(a) > max_depth || tree_depth(b) > max_depth) &&
         throw(ArgumentError("Un padre supera max_depth"))
+    g = _same_graph(a, b)
+    nodes = g.nodes
+    size_a, size_b = node_count(a), node_count(b)
     for _ in 1:PROTECTED_ATTEMPTS
-        i = rand(rng, 1:nsize(a))
-        j = rand(rng, 1:nsize(b))
-        sub_a, depth_a = _node_at(a, i)
-        sub_b, depth_b = _node_at(b, j)
-        if depth_a + nheight(sub_b) <= max_depth && depth_b + nheight(sub_a) <= max_depth
-            return _replace(a, i, sub_b), _replace(b, j, sub_a)
+        i = rand(rng, 1:size_a)
+        j = rand(rng, 1:size_b)
+        sub_a, depth_a = _node_at(nodes, a.i, i)
+        sub_b, depth_b = _node_at(nodes, b.i, j)
+        if depth_a + Int(@inbounds(nodes[sub_b]).height) <= max_depth &&
+           depth_b + Int(@inbounds(nodes[sub_a]).height) <= max_depth
+            return Tree(g, _replace!(g, a.i, i, sub_b)), Tree(g, _replace!(g, b.i, j, sub_a))
         end
     end
     return b, a
 end
 
 "Mutacion cuyo subarbol nuevo cabe en el presupuesto de profundidad restante."
-function depth_protected_mutation(parent::AnyNode, no_variables::Integer, max_depth::Integer,
+function depth_protected_mutation(parent::Tree, no_variables::Integer, max_depth::Integer,
                                   rng::AbstractRNG)
     _check_depth(max_depth)
-    nheight(parent) > max_depth && throw(ArgumentError("El padre supera max_depth"))
-    k = rand(rng, 1:nsize(parent))
-    _, depth = _node_at(parent, k)
+    tree_depth(parent) > max_depth && throw(ArgumentError("El padre supera max_depth"))
+    g = parent.g
+    k = rand(rng, 1:node_count(parent))
+    _, depth = _node_at(g.nodes, parent.i, k)
     budget = Int(max_depth) - depth
-    replacement = grow_random(rand(rng, 0:budget), no_variables, rng)
-    return _replace(parent, k, replacement)
+    replacement = _grow!(g, rand(rng, 0:budget), Int(no_variables), rng, false)
+    return Tree(g, _replace!(g, parent.i, k, replacement))
 end
 
 # ---------------------------------------------------------------------------
@@ -536,22 +750,99 @@ Base.@kwdef struct GPOptions
     max_depth::Int = 5
     generations::Int = 5
     seed::Int = 42
-    cache_mb::Int = 1024       # presupuesto aproximado del cache de resultados
-    cache_min_size::Int = 0    # 0 = automatico segun cache_mb; NO_CACHE = sin cache
+    cache_mb::Int = 1024         # presupuesto aproximado del cache de resultados
+    cache_min_size::Int = 0      # 0 = automatico segun cache_mb; NO_CACHE = sin cache
+    fold_constants::Bool = true  # plegado de constantes (--no-fold lo apaga)
+    early_cut::Bool = true       # corte temprano exacto (--no-cut lo apaga)
 end
 
 struct GPResult
-    best::AnyNode
+    best::Tree
     best_fitness::Float64
     best_fitness_per_generation::Vector{Float64}
 end
 
 struct Individual
     score::Float64
-    tree::AnyNode
+    tree::Int32  # raiz dentro del grafo de la corrida
 end
 
 _score(ind::Individual) = ind.score
+
+# Monticulo de maximos con los `cap` mejores MSE de los hijos ya evaluados. h[1] es el
+# (cap)-esimo mejor: solo puede bajar conforme llegan hijos.
+function _record_best!(h::Vector{Float64}, s::Float64, cap::Int)
+    if length(h) < cap
+        push!(h, s)
+        k = length(h)
+        @inbounds while k > 1
+            parent = k >> 1
+            h[parent] >= h[k] && break
+            h[parent], h[k] = h[k], h[parent]
+            k = parent
+        end
+    elseif s < h[1]
+        h[1] = s
+        n = length(h)
+        k = 1
+        @inbounds while true
+            c = 2k
+            c > n && break
+            (c < n && h[c + 1] > h[c]) && (c += 1)
+            h[k] >= h[c] && break
+            h[k], h[c] = h[c], h[k]
+            k = c
+        end
+    end
+    return h
+end
+
+function _score_child!(heap::Vector{Float64}, t::Tree, data::Dataset, S::Int, half::Int,
+                       early_cut::Bool)
+    cut = (early_cut && length(heap) == half) ? @inbounds(heap[1]) : Inf
+    s = fitness(t, data, S; cut=cut)
+    _record_best!(heap, s, half)
+    return s
+end
+
+# Copia los arboles vivos (y su cache completo) a un grafo nuevo, conservando lo que
+# comparten. Se usa en corridas largas para que la memoria no crezca sin limite.
+function _compact(g::Graph, population::Vector{Individual}, data::Dataset)
+    newg = _track!(Graph(fold=g.fold))
+    map = zeros(Int32, length(g.nodes))
+    rows = nrows(data)
+    id = Int32(data.id)
+    for k in eachindex(population)
+        ind = population[k]
+        population[k] = Individual(ind.score, _copy_into!(newg, g, ind.tree, map, rows, id))
+    end
+    return newg
+end
+
+function _copy_into!(newg::Graph, g::Graph, n::Int32, map::Vector{Int32}, rows::Int, id::Int32)::Int32
+    m = map[n]
+    m != 0 && return m
+    r = g.nodes[n]
+    if r.kind == K_CONST
+        m = const_node(newg, r.value)
+    elseif r.kind == K_VAR
+        m = var_node(newg, r.left)
+    else
+        m = _push!(newg, r)  # reservado en preorden; los hijos se corrigen abajo
+        l = _copy_into!(newg, g, r.left, map, rows, id)
+        rr = r.right == 0 ? Int32(0) : _copy_into!(newg, g, r.right, map, rows, id)
+        newg.nodes[m] = NodeRec(l, rr, r.size, r.height, r.kind, r.flags, r.value)
+        if g.cache_id[n] == id
+            newg.cache_off[m] = _new_slot!(newg, rows)
+            dst, dstart = _cache_ref(newg, m)
+            src, sstart = _cache_ref(g, n)
+            copyto!(dst, dstart + 1, src, sstart + 1, rows)
+            newg.cache_id[m] = id
+        end
+    end
+    map[n] = m
+    return m
+end
 
 function full_gp(data::Dataset, options::GPOptions)
     N = options.population_size
@@ -564,18 +855,30 @@ function full_gp(data::Dataset, options::GPOptions)
     nvars, max_depth = nvariables(data), options.max_depth
     S = options.cache_min_size > 0 ? options.cache_min_size :
         auto_cache_min_size(N, max_depth, nrows(data), options.cache_mb)
+    half = N ÷ 2
+    # Grafo propio de la corrida; se reserva memoria para que no se copie al crecer.
+    g = _track!(Graph(fold=options.fold_constants))
+    expected = ceil(Int, 1.1 * N * _expected_full_size(max_depth)) +
+               options.generations * N * (2 * max_depth + 16) + 1024
+    sizehint!(g.nodes, expected)
+    sizehint!(g.cache_id, expected)
+    sizehint!(g.cache_off, expected)
+    # Corridas largas: compactar cuando el cache ocupa el doble del presupuesto.
+    compact_values = options.cache_mb > 0 ? 2 * options.cache_mb * 2^20 ÷ 8 : typemax(Int)
 
     population = Individual[]
     sizehint!(population, N)
     for _ in 1:N
-        tree = grow_full(max_depth, nvars, rng)
-        push!(population, Individual(fitness(tree, data, S), tree))
+        root = _grow!(g, max_depth, nvars, rng, true)
+        push!(population, Individual(fitness(Tree(g, root), data, S), root))
     end
 
     history = Float64[]
-    pool = Vector{AnyNode}(undef, N)
+    pool = Vector{Int32}(undef, N)
     offspring = Individual[]
     sizehint!(offspring, N)
+    heap = Float64[]
+    sizehint!(heap, half)
     for generation in 0:options.generations
         push!(history, minimum(_score, population))
         generation == options.generations && break
@@ -587,25 +890,29 @@ function full_gp(data::Dataset, options::GPOptions)
         end
 
         empty!(offspring)
+        empty!(heap)
         for _ in 1:(N ÷ 4)  # N/2 hijos por crossover
             p1 = pool[rand(rng, 1:N)]
             p2 = pool[rand(rng, 1:N)]
-            c1, c2 = depth_protected_crossover(p1, p2, max_depth, rng)
-            push!(offspring, Individual(fitness(c1, data, S), c1))
-            push!(offspring, Individual(fitness(c2, data, S), c2))
+            c1, c2 = depth_protected_crossover(Tree(g, p1), Tree(g, p2), max_depth, rng)
+            push!(offspring, Individual(_score_child!(heap, c1, data, S, half, options.early_cut), c1.i))
+            push!(offspring, Individual(_score_child!(heap, c2, data, S, half, options.early_cut), c2.i))
         end
         for _ in 1:(N ÷ 2)  # N/2 hijos por mutacion
-            m = depth_protected_mutation(pool[rand(rng, 1:N)], nvars, max_depth, rng)
-            push!(offspring, Individual(fitness(m, data, S), m))
+            m = depth_protected_mutation(Tree(g, pool[rand(rng, 1:N)]), nvars, max_depth, rng)
+            push!(offspring, Individual(_score_child!(heap, m, data, S, half, options.early_cut), m.i))
         end
 
         # Reemplazo 50/50 (orden estable: mismos empates que A).
         sort!(population; by=_score, alg=MergeSort)
         sort!(offspring; by=_score, alg=MergeSort)
-        population = vcat(population[1:N÷2], offspring[1:N÷2])
+        population = vcat(population[1:half], offspring[1:half])
+        if g.cache_values > compact_values
+            g = _compact(g, population, data)
+        end
     end
     best = population[argmin(map(_score, population))]
-    return GPResult(best.tree, best.score, history)
+    return GPResult(Tree(g, best.tree), best.score, history)
 end
 
 # ---------------------------------------------------------------------------
@@ -624,7 +931,7 @@ end
 """
 Los `trees` padres (grow_full) estan en memoria AL MISMO TIEMPO (batch_pairs = 0;
 con poca RAM, batch_pairs = 2500 deja 5000 a la vez). Se cronometra SOLO el
-crossover; los hijos se sueltan cada 16 cruces y se recolectan fuera del cronometro.
+crossover; los hijos se sueltan cada 16 cruces, fuera del cronometro.
 """
 function benchmark_crossover(trees::Integer, depth::Integer, no_variables::Integer;
                              seed::Integer=42, batch_pairs::Integer=0)
@@ -636,29 +943,32 @@ function benchmark_crossover(trees::Integer, depth::Integer, no_variables::Integ
     per_batch = (batch_pairs == 0 || batch_pairs > pairs) ? pairs : Int(batch_pairs)
     measured = 0.0
     total_nodes = 0
-    parents = Tuple{AnyNode, AnyNode}[]
-    children = Tuple{AnyNode, AnyNode}[]
-    sizehint!(children, CHILDREN_CHUNK)
+    parents = Tuple{Int32, Int32}[]
     offset = 0
     while offset < pairs
         count = min(per_batch, pairs - offset)
         empty!(parents)
+        # Grafo nuevo por tanda: la tanda anterior se libera (fuera del cronometro).
+        g = Graph()
+        sizehint!(g.nodes, ceil(Int, 2.1 * count * _expected_full_size(depth)) +
+                           2 * CHILDREN_CHUNK * (depth + 2) + 1024)
         for _ in 1:count
-            p1 = grow_full(depth, no_variables, rng)
-            p2 = grow_full(depth, no_variables, rng)
-            total_nodes += nsize(p1) + nsize(p2)
+            p1 = _grow!(g, Int(depth), Int(no_variables), rng, true)
+            p2 = _grow!(g, Int(depth), Int(no_variables), rng, true)
+            total_nodes += Int(g.nodes[p1].size) + Int(g.nodes[p2].size)
             push!(parents, (p1, p2))
         end
         GC.gc()  # fuera del cronometro
+        mark = length(g.nodes)
         for start in 1:CHILDREN_CHUNK:count
             stop = min(count, start + CHILDREN_CHUNK - 1)
             t0 = time_ns()
             for i in start:stop
-                push!(children, crossover(parents[i][1], parents[i][2], rng))
+                p1, p2 = @inbounds parents[i]
+                crossover(Tree(g, p1), Tree(g, p2), rng)
             end
             measured += (time_ns() - t0) / 1e9
-            empty!(children)
-            GC.gc(false)  # recoleccion de los hijos fuera del cronometro
+            _truncate!(g, mark)  # hijos soltados fuera del cronometro
         end
         offset += count
     end
@@ -687,32 +997,43 @@ function _throws_any(f)
     end
 end
 
-# Nodos internos alcanzables (sin repetir) y comprobacion de metadatos.
-function _internal_nodes!(n::AnyNode, out::IdDict{Any, Nothing})
-    n isa OpNode || return out
-    haskey(out, n) && return out
-    out[n] = nothing
-    _internal_nodes!(n.left, out)
-    n.right === nothing || _internal_nodes!(n.right::AnyNode, out)
-    return out
+# Metadatos guardados == recalculados, en todo el subarbol.
+function _metadata_ok(g::Graph, n::Int32)
+    r = g.nodes[n]
+    r.kind <= K_VAR && return r.size == 1 && r.height == 0
+    L = g.nodes[r.left]
+    size = 1 + Int(L.size)
+    height = Int(L.height)
+    maxv = _maxvar(L)
+    isc = _isconst(L)
+    if r.right != 0
+        R = g.nodes[r.right]
+        size += Int(R.size)
+        height = max(height, Int(R.height))
+        maxv = max(maxv, _maxvar(R))
+        isc &= _isconst(R)
+    end
+    folded = (r.flags & FOLDED) != 0
+    ok = r.size == size && r.height == height + 1 && folded == (g.fold && isc) &&
+         (folded || _maxvar(r) == maxv)
+    return ok && _metadata_ok(g, r.left) && (r.right == 0 || _metadata_ok(g, r.right))
+end
+_metadata_ok(t::Tree) = _metadata_ok(t.g, t.i)
+
+function _count_nodes(g::Graph, n::Int32)
+    r = g.nodes[n]
+    r.kind <= K_VAR && return 1
+    return 1 + _count_nodes(g, r.left) + (r.right == 0 ? 0 : _count_nodes(g, r.right))
 end
 
-function _metadata_ok(n::AnyNode)
-    n isa OpNode || return true
-    s = 1 + nsize(n.left) + (n.right === nothing ? 0 : nsize(n.right::AnyNode))
-    h = 1 + max(nheight(n.left), n.right === nothing ? 0 : nheight(n.right::AnyNode))
-    return nsize(n) == s && nheight(n) == h && _metadata_ok(n.left) &&
-           (n.right === nothing || _metadata_ok(n.right::AnyNode))
-end
-
-_count_nodes(n::Union{VarNode, ConstNode}) = 1
-_count_nodes(n::OpNode) = 1 + _count_nodes(n.left) +
-                            (n.right === nothing ? 0 : _count_nodes(n.right::AnyNode))
-
-_leaf_depths(n::Union{VarNode, ConstNode}, d, out) = push!(out, d)
-function _leaf_depths(n::OpNode, d, out)
-    _leaf_depths(n.left, d + 1, out)
-    n.right === nothing || _leaf_depths(n.right::AnyNode, d + 1, out)
+function _leaf_depths(g::Graph, n::Int32, d, out)
+    r = g.nodes[n]
+    if r.kind <= K_VAR
+        push!(out, d)
+    else
+        _leaf_depths(g, r.left, d + 1, out)
+        r.right == 0 || _leaf_depths(g, r.right, d + 1, out)
+    end
     return out
 end
 
@@ -726,6 +1047,29 @@ function _reference_mse(tree, xs, ys)
     return total / length(ys)
 end
 
+# Cada subarbol plegado vale, bit a bit, lo mismo que recorrerlo; y esta plegado si y
+# solo si no tiene variables.
+function _folding_ok(g::Graph, n::Int32)
+    r = g.nodes[n]
+    r.kind <= K_VAR && return true
+    sub = Tree(g, n)
+    folded = (r.flags & FOLDED) != 0
+    folded == !occursin('x', expression(sub)) || return false
+    folded && !(r.value === eval_row(sub, Float64[])) && return false
+    return _folding_ok(g, r.left) && (r.right == 0 || _folding_ok(g, r.right))
+end
+
+# Los operadores de un arbol nuevo estan en preorden: cada operador va despues de su
+# padre y su hijo izquierdo (si no es una variable compartida) va justo despues de el.
+function _preorder_ok(g::Graph, n::Int32)
+    r = g.nodes[n]
+    r.kind <= K_VAR && return true
+    L = g.nodes[r.left]
+    (L.kind == K_VAR || r.left == n + 1) || return false
+    r.right == 0 || g.nodes[r.right].kind == K_VAR || r.right > r.left || return false
+    return _preorder_ok(g, r.left) && (r.right == 0 || _preorder_ok(g, r.right))
+end
+
 function run_tests(; verbose::Bool=false)
     passed = Ref(0)
     function check(condition::Bool, description::AbstractString)
@@ -734,16 +1078,20 @@ function run_tests(; verbose::Bool=false)
         verbose && println("  ok  ", description)
     end
     rng = Xoshiro(42)
+    g = DEFAULT_GRAPH
 
     # --- Parte 1: representacion, expression, eval, MSE ---------------------
-    formula = OpNode(OP_ADD, variable(1), OpNode(OP_MUL, variable(2), ConstNode(0.5)))
+    check(sizeof(NodeRec) == 24 && isbitstype(NodeRec), "registro de nodo de 24 bytes sin punteros")
+    formula = Tree(g, op_node(g, OP_ADD, var_node(g, 1),
+                              op_node(g, OP_MUL, var_node(g, 2), const_node(g, 0.5))))
     check(expression(formula) == "(x1 + (x2 * 0.5))", "expression")
     check(eval_row(formula, [2.0, 3.0]) == 3.5, "eval_row (x1 + x2*0.5) en [2, 3] = 3.5")
     check(node_count(formula) == 5 && tree_depth(formula) == 2, "tamano y profundidad")
-    check(variable(2) === variable(2), "las variables se comparten")
-    check(_throws(() -> OpNode(OP_ADD, ConstNode(1.0))), "binario sin hijo derecho es rechazado")
-    check(_throws(() -> OpNode(0x07, ConstNode(1.0), ConstNode(2.0))), "codigo de operacion invalido")
-    check(_throws(() -> VarNode(0)), "indice de variable 0 rechazado")
+    check(var_node(g, 2) == var_node(g, 2), "las variables se comparten")
+    check(_throws(() -> op_node(g, OP_ADD, const_node(g, 1.0))), "binario sin hijo derecho es rechazado")
+    check(_throws(() -> op_node(g, 0x07, const_node(g, 1.0), const_node(g, 2.0))),
+          "codigo de operacion invalido")
+    check(_throws(() -> var_node(g, 0)), "indice de variable 0 rechazado")
 
     exact = Dataset([[2.0, 3.0], [1.0, 2.0]], [3.5, 2.0])
     manual = Dataset([[1.0, 2.0, 0.0], [0.0, 1.0, 1.0], [2.0, 0.5, 1.0]], [2.5, 1.0, 3.5])
@@ -768,18 +1116,56 @@ function run_tests(; verbose::Bool=false)
         end
     end
 
+    # Operador sin saltos == operador con saltos, bit a bit (incluye Inf, NaN, ceros).
+    specials = [0.0, -0.0, 1e-13, -1e-13, 1.0, -2.5, 3e300, -Inf, Inf, NaN, 1e-300]
+    same_ops = true
+    for a in specials, b in specials, op in (OP_ADD, OP_SUB, OP_MUL, OP_DIV)
+        same_ops &= apply_select(op, a, b) === apply(op, a, b)
+    end
+    for _ in 1:10000
+        a, b = (rand(rng) - 0.5) * 10.0^rand(rng, -14:5), (rand(rng) - 0.5) * 10.0^rand(rng, -14:5)
+        op = RANDOM_OPS[rand(rng, 1:4)]
+        same_ops &= apply_select(op, a, b) === apply(op, a, b)
+    end
+    check(same_ops, "operador sin saltos identico al operador con saltos")
+
     # --- Parte 2: generacion -----------------------------------------------
     for depth in 0:8, nvars in (1, 2, 5)
         full = grow_full(depth, nvars, rng)
         rnd = grow_random(depth, nvars, rng)
         check(tree_depth(full) == depth && _metadata_ok(full), "grow_full profundidad exacta")
         check(tree_depth(rnd) <= depth && _metadata_ok(rnd), "grow_random profundidad maxima")
-        check(node_count(full) == _count_nodes(full), "tamano guardado = tamano real")
+        check(node_count(full) == _count_nodes(g, full.i), "tamano guardado = tamano real")
+        check(_preorder_ok(g, full.i) && _preorder_ok(g, rnd.i), "arboles nuevos en preorden")
         back = parse_expression(expression(full, 17))
         check(expression(back, 17) == expression(full, 17), "expression(17) -> parse sin perdida")
     end
-    check(unique(_leaf_depths(grow_full(6, 3, rng), 0, Int[])) == [6],
+    deep6 = grow_full(6, 3, rng)
+    check(unique(_leaf_depths(g, deep6.i, 0, Int[])) == [6],
           "grow_full: TODAS las hojas a profundidad exacta")
+
+    # --- Plegado de constantes ------------------------------------------------
+    folded = parse_expression("((sqrt(0.25) + 0.1) * (x1 - (1 / 0)))")
+    fr = g.nodes[folded.i]
+    L, R = g.nodes[fr.left], g.nodes[fr.right]
+    check((L.flags & FOLDED) != 0 && L.value === 0.6 && (fr.flags & FOLDED) == 0 &&
+          (R.flags & FOLDED) == 0 && (g.nodes[R.right].flags & FOLDED) != 0 &&
+          g.nodes[R.right].value === 1e12, "plegado de constantes: valores y marcas")
+    check(expression(folded) == "((sqrt(0.25) + 0.1) * (x1 - (1 / 0)))" && node_count(folded) == 10,
+          "el plegado no cambia expression ni tamano")
+    folding_ok = true
+    for t in 1:300
+        tree = grow_random(1 + t % 10, t % 4, rng)  # 0 variables = arbol solo de constantes
+        folding_ok &= _folding_ok(g, tree.i)
+    end
+    check(folding_ok, "cada subarbol constante vale lo mismo, bit a bit, que recorrerlo")
+    big = parse_expression("((1e300 * 1e300) - (1e300 * 1e300))")  # Inf - Inf = NaN
+    check((g.nodes[big.i].flags & FOLDED) != 0 && isnan(g.nodes[big.i].value) &&
+          fitness(big, exact) == Inf, "constante no finita: MSE = +Inf como sin plegado")
+    nofold = Graph(fold=false)
+    plain = parse_expression("((sqrt(0.25) + 0.1) * x1)"; graph=nofold)
+    check((nofold.nodes[nofold.nodes[plain.i].left].flags & FOLDED) == 0 && _metadata_ok(plain),
+          "grafo sin plegado")
 
     # --- Cache: mismo MSE bit a bit con y sin cache, en frio y en caliente ---
     r2 = Xoshiro(7)
@@ -789,41 +1175,52 @@ function run_tests(; verbose::Bool=false)
     hard = Dataset(xs, ys)
     other = Dataset(xs[1:40], ys[41:80])
     mismatches = 0
-    trees = [grow_random(1 + t % 9, 3, rng) for t in 1:200]
-    for t in trees
-        ref = _reference_mse(t, xs, ys)
-        ref_other = _reference_mse(t, xs[1:40], ys[41:80])
-        for S in (NO_CACHE, 1, 4, 16)
-            fitness(t, hard, S) === ref || (mismatches += 1)   # frio o caliente
-            fitness(t, hard, S) === ref || (mismatches += 1)   # caliente
-            fitness(t, other, S) === ref_other || (mismatches += 1)  # otro dataset
+    for graph in (g, nofold)
+        trees = [grow_random(1 + t % 9, 3, rng; graph=graph) for t in 1:200]
+        for t in trees
+            ref = _reference_mse(t, xs, ys)
+            ref_other = _reference_mse(t, xs[1:40], ys[41:80])
+            for S in (NO_CACHE, 1, 4, 16)
+                fitness(t, hard, S) === ref || (mismatches += 1)   # frio o caliente
+                fitness(t, hard, S) === ref || (mismatches += 1)   # caliente
+                fitness(t, other, S) === ref_other || (mismatches += 1)  # otro dataset
+            end
+        end
+        # Hijos evaluados con los padres ya en cache (se calienta el cache primero).
+        foreach(t -> fitness(t, hard, 1), trees)
+        for _ in 1:200
+            a, b = trees[rand(rng, 1:200)], trees[rand(rng, 1:200)]
+            c, d = crossover(a, b, rng)
+            m = mutation(a, 3, rng)
+            for t in (c, d, m)
+                fitness(t, hard, 1) === _reference_mse(t, xs, ys) || (mismatches += 1)
+            end
         end
     end
-    check(mismatches == 0, "MSE con cache == sin cache == referencia, bit a bit")
-    # Hijos evaluados con los padres ya en cache (se calienta el cache primero).
-    foreach(t -> fitness(t, hard, 1), trees)
-    mismatches = 0
-    for _ in 1:200
-        a, b = trees[rand(rng, 1:200)], trees[rand(rng, 1:200)]
-        c, d = crossover(a, b, rng)
-        m = mutation(a, 3, rng)
-        for t in (c, d, m)
-            fitness(t, hard, 1) === _reference_mse(t, xs, ys) || (mismatches += 1)
-        end
+    check(mismatches == 0, "MSE con cache == sin cache == referencia, bit a bit (con y sin plegado)")
+
+    # --- Corte temprano: si devuelve un numero, es el MSE exacto ---------------
+    cut_ok = true
+    for t in 1:300
+        tree = grow_random(1 + t % 8, 3, rng)
+        exact_mse = _reference_mse(tree, xs, ys)
+        cut = 10.0^rand(rng, -2:4)
+        s = fitness(tree, hard, 4; cut=cut)
+        cut_ok &= isinf(s) ? (exact_mse > cut || isinf(exact_mse)) : (s === exact_mse && s <= cut)
     end
-    check(mismatches == 0, "hijos con subarboles en cache: MSE identico")
+    check(cut_ok, "corte temprano: MSE exacto o +Inf solo si el MSE real supera el corte")
 
     # --- Crossover y mutacion: copia de camino --------------------------------
     a, b = grow_full(4, 2, rng), grow_full(3, 2, rng)
     old_a, old_b = expression(a, 17), expression(b, 17)
-    parents_nodes = _internal_nodes!(b, _internal_nodes!(a, IdDict{Any, Nothing}()))
     for _ in 1:200
+        before = length(g.nodes)
         c, d = crossover(a, b, rng)
         check(node_count(c) + node_count(d) == node_count(a) + node_count(b),
               "crossover conserva el total de nodos")
         check(_metadata_ok(c) && _metadata_ok(d), "metadatos correctos en los hijos")
-        new_c = count(k -> !haskey(parents_nodes, k), keys(_internal_nodes!(c, IdDict{Any, Nothing}())))
-        check(new_c <= tree_depth(a) + 1, "copia de camino: solo se crean los nodos del camino")
+        check(length(g.nodes) - before <= tree_depth(a) + tree_depth(b),
+              "copia de camino: solo se crean los nodos del camino")
         m = mutation(a, 2, rng)
         check(_metadata_ok(m), "mutacion con metadatos correctos")
         x, y = depth_protected_crossover(a, b, 4, rng)
@@ -843,6 +1240,8 @@ function run_tests(; verbose::Bool=false)
     check(_throws(() -> depth_protected_crossover(deep, b, 4, rng)),
           "padre que supera max_depth es rechazado")
     check(expression(deep_copy_tree(deep), 17) == expression(deep, 17), "copia profunda de prueba")
+    check(_throws(() -> crossover(a, grow_full(3, 2, rng; graph=Graph()), rng)),
+          "no se mezclan arboles de grafos distintos")
 
     # --- GP completo --------------------------------------------------------
     check(_throws(() -> full_gp(exact, GPOptions(generations=-1))), "generaciones negativas rechazadas")
@@ -850,16 +1249,30 @@ function run_tests(; verbose::Bool=false)
     h = run.best_fitness_per_generation
     check(length(h) == 4, "historial de fitness")
     check(all(h[i] <= h[i-1] for i in 2:length(h)), "elitismo: el mejor MSE no aumenta")
-    o1 = GPOptions(population_size=40, max_depth=5, generations=5, cache_min_size=1)
-    o2 = GPOptions(population_size=40, max_depth=5, generations=5, cache_min_size=NO_CACHE)
-    r1, r2b = full_gp(exact, o1), full_gp(exact, o2)
-    check(r1.best_fitness_per_generation == r2b.best_fitness_per_generation &&
-          expression(r1.best, 17) == expression(r2b.best, 17), "el cache no altera el GP")
-    check(auto_cache_min_size(5000, 12, 49, 1024) >= 8 &&
+    same_run(r1, r2) = r1.best_fitness_per_generation == r2.best_fitness_per_generation &&
+                       expression(r1.best, 17) == expression(r2.best, 17) &&
+                       r1.best_fitness === r2.best_fitness
+    for seed in 1:3
+        base = GPOptions(population_size=200, max_depth=6, generations=6, seed=seed)
+        ref = full_gp(hard, base)
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, cache_min_size=NO_CACHE))),
+              "el cache no altera el GP")
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, fold_constants=false, early_cut=false))),
+              "el plegado y el corte temprano no alteran el GP")
+        # cache_mb=1 con S=1 fuerza la compactacion del grafo en cada generacion.
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, cache_mb=1, cache_min_size=1))),
+              "la compactacion del grafo no altera el GP")
+    end
+    check(auto_cache_min_size(5000, 12, 49, 1024) >= 16 &&
           auto_cache_min_size(5000, 12, 49, 0) == NO_CACHE, "tamano automatico del cache")
 
     t = benchmark_crossover(40, 4, 2; seed=1)
     check(t.crossovers == 20 && t.resident_trees == 40 && t.seconds > 0, "benchmark de crossover")
+    t = benchmark_crossover(40, 4, 2; seed=1, batch_pairs=5)
+    check(t.resident_trees == 10, "benchmark de crossover por lotes")
     return passed[]
 end
 
