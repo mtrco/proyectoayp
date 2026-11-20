@@ -63,6 +63,9 @@ que el docente debe proporcionar. Formato: `x1,x2,...,y` (ultima columna la sali
 .\gp_b.exe --bench-gp --data=data/DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
 ```
 
+Para medir sin las dos optimizaciones pendientes de confirmar (mismo resultado):
+`--no-fold --no-cut`.
+
 El manual **no establece el numero de generaciones**, ni la cantidad concreta de
 variables para el primer benchmark ni el formato del dataset oficial. Sustituye
 `--generations=10`, el dataset y `--variables=2` cuando acuerden el protocolo.
@@ -106,7 +109,7 @@ de los mismos arboles bit a bit entre las tres implementaciones.
 - Proteccion por profundidad en crossover y mutacion.
 - Seleccion: torneo binario repetido.
 - Variacion: 50% descendientes por crossover, 50% por mutacion.
-- Reemplazo: mejores 50% actuales + mejores 50% descendientes.
+- Reemplazo: mejores 50% actuales + mejores 50% descendientes (orden estable).
 - GP inicializa 100% de la poblacion usando `grow_full`.
 - MSE: menor es mejor; resultados no finitos reciben +infinito.
 
@@ -183,6 +186,62 @@ una comprobacion repetida:
 - **RAM con 1,000 arboles de profundidad 15:** 716 MB antes y 479 MB ahora. Con
   10,000 arboles serian unos 4.8 GB en lugar de unos 7 GB.
 
+## Evaluacion sin saltos, plegado, corte temprano y arboles en preorden (resultados identicos)
+
+Medido en el contenedor Linux (g++ 13.3 y clang 18 `-O3`, un hilo, poblacion 5000, 10
+generaciones, `data/ejemplo.csv`), la evaluacion era ~80% del tiempo del GP en
+profundidad 12, y casi todo ese costo eran **saltos mal adivinados** por el procesador.
+
+- **Evaluacion sin saltos** (`apply_binary`, `direct_value`). El `switch` por tipo de nodo
+  es un salto condicional; en un arbol de miles de nodos el procesador no puede memorizar la
+  secuencia y falla muy seguido (cada fallo cuesta ~15-20 ciclos). Ahora se calculan las
+  cuatro operaciones binarias y se elige el resultado con el tipo de nodo como indice, y la
+  hoja se lee eligiendo la direccion (`variable ? x + i : &value`). Mismas operaciones IEEE:
+  MSE identico bit a bit. Evaluacion en profundidad 12: 5.6 -> 2.9 ns por nodo y fila (g++),
+  5.25 -> 2.0 (clang).
+- **Plegado de constantes** (`prepare_tree`, `--no-fold` lo apaga). La pasada que ya validaba
+  los indices de variable ahora tambien calcula, una sola vez, el valor de cada subarbol sin
+  variables (por ejemplo `(0.3 * -0.5)`); la evaluacion lo lee sin recorrerlo. Se pliegan
+  17-19% de los nodos internos. El valor queda en la union del nodo y la marca `direct` en
+  un byte del relleno: el nodo sigue midiendo 32 bytes.
+- **Corte temprano exacto** (`--no-cut` lo apaga). Solo sobrevive el mejor 50% de los hijos.
+  Un monticulo guarda los N/2 mejores MSE vistos; si el MSE parcial de un hijo ya supera
+  al (N/2)-esimo mejor, el hijo nunca sobreviviria: se deja de evaluar y recibe +infinito.
+- **Orden estable en el reemplazo** (`stable_sort` en lugar de `nth_element`). El torneo
+  elige individuos por posicion; con `nth_element` esa posicion dependia de la biblioteca
+  estandar y de todos los puntajes. Con orden estable (igual que A y C) el GP da el mismo
+  resultado con y sin corte temprano. **Esto cambia las corridas de B respecto a versiones
+  anteriores** (mismo algoritmo, otro orden de los sobrevivientes); las anteriores tampoco
+  eran comparables entre compiladores.
+- **Arboles generados en preorden**. `grow_impl` reserva el nodo padre antes que sus hijos,
+  asi que el arbol queda en memoria en el orden en que clone y la evaluacion lo recorren.
+  El generador se consume igual (mismos arboles; `--test` lo comprueba contra la version
+  anterior). Benchmark de crossover: 1.4 a 1.9 veces mas rapido.
+- **Verificado:** `--test` (incluye MSE identico a `Node::eval` en 400 arboles con datos
+  extremos, plegado, preorden y el GP igual con y sin `--no-fold --no-cut`),
+  `verificar_con_b.jl` (3,280 arboles contra A y C, 0 diferencias).
+
+Mediana de 3 semillas en el mismo contenedor ("antes" = commit 4561dac):
+
+| Profundidad | GP antes g++ (s) | GP ahora g++ (s) | GP antes clang (s) | GP ahora clang (s) | Crossover antes (us) | Crossover ahora (us) |
+|---|---|---|---|---|---|---|
+| 7 | 0.87 | 0.92 * | 0.88 | 0.66 | 5.30 | 2.61 |
+| 9 | 3.11 | 2.72 | 3.09 | 2.09 | 14.99 | 8.92 |
+| 10 | - | - | - | - | 25.55 | 16.29 |
+| 12 | 31.20 | 18.20 | 31.40 | 14.94 | 101.4 | 79.2 |
+| 15 | - | - | - | - | 523.8 | 329.5 |
+
+\* Dentro del ruido de medicion (otras corridas de la misma version: 0.74-0.80 s).
+La explicacion completa, con diagramas, esta en [`../docs/README.md`](../docs/README.md).
+
+### Compilador
+
+clang aprovecha mucho mejor la evaluacion sin saltos (2.0 contra 2.9 ns por nodo y fila).
+En Windows conviene medir **clang-cl** (Visual Studio Installer -> "C++ Clang tools for
+Windows"; en CMake, toolset `ClangCL`). clang-cl usa la biblioteca estandar de MSVC, asi que
+las distribuciones aleatorias, y por lo tanto las corridas, son las mismas que con MSVC.
+Confirmar con el profesor que se permite.
+
 ## Validacion de entradas (no afecta el tiempo medido)
 
 - Los argumentos numericos de la linea de comandos deben ser enteros no negativos
@@ -202,5 +261,7 @@ una comprobacion repetida:
 6. Probar `/O2 /GL /LTCG` y medir antes de introducir mas optimizaciones.
 7. ~~Nodo mas compacto y arena de nodos~~: hecho; en profundidad 15 con 10,000 arboles
    la RAM baja de unos 7 GB a unos 4.8 GB.
-8. Pendientes de confirmar con el profesor: PGO de MSVC, compilar con clang-cl, plegar
-   subarboles constantes y cortar el MSE antes de terminar.
+8. Pendientes de confirmar con el profesor: PGO de MSVC y compilar con clang-cl.
+   El plegado de subarboles constantes y el corte temprano del MSE ya estan hechos y
+   activos por defecto; si el profesor no los acepta, `--no-fold --no-cut` los apagan
+   (el resultado es el mismo, solo cambia el tiempo).

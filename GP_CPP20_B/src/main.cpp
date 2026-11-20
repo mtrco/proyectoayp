@@ -21,6 +21,8 @@ struct Args {
     std::size_t count = 100;
     int depth = 5;
     bool full = false;
+    bool fold_constants = true; // --no-fold lo apaga
+    bool early_cut = true;      // --no-cut lo apaga
     std::size_t population = 5000;
     std::size_t generations = 10; // El manual no especifica este valor.
     std::size_t variables = 2;
@@ -43,6 +45,8 @@ Args parse_args(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--full") { opts.full = true; continue; }
+        if (arg == "--no-fold") { opts.fold_constants = false; continue; }
+        if (arg == "--no-cut") { opts.early_cut = false; continue; }
         const std::size_t equal = arg.find('=');
         if (equal == std::string::npos) {
             throw std::invalid_argument("Se esperaba --opcion=valor: " + arg);
@@ -84,7 +88,7 @@ void print_help() {
   gp_b --bench-crossover [--trees=10000] [--depths=7,9,10,12,15]
                           [--variables=2] [--seed=42] [--batch-pairs=0]
   gp_b --bench-gp [--data=dataset.csv] [--population=5000]
-                  [--depths=7,9,12] [--generations=10] [--seed=42]
+                  [--depths=7,9,12] [--generations=10] [--seed=42] [--no-fold] [--no-cut]
   gp_b --eval-file --file=arboles.txt [--data=dataset.csv]
        Lee una expresion por linea e imprime MSE (17 digitos), profundidad,
        nodos y la expresion, separados por tabuladores (para comparar con A y C).
@@ -96,6 +100,8 @@ El manual NO especifica el numero de generaciones; acordarlo con el docente.
 En el benchmark de crossover se mide solo el crossover, no generar padres.
 Por defecto los 10000 padres estan en memoria a la vez (protocolo acordado).
 --batch-pairs=2500 deja 5000 a la vez si no alcanza la RAM.
+--no-fold: no plegar subarboles sin variables. --no-cut: sin corte temprano exacto.
+Ambas optimizaciones dan el mismo resultado; se pueden apagar si el profesor no las acepta.
 )";
 }
 
@@ -108,6 +114,8 @@ void run_gp_benchmark(const gp::Dataset& data, const std::vector<int>& depths,
         opts.max_depth = depth;
         opts.generations = args.generations;
         opts.seed = args.seed;
+        opts.fold_constants = args.fold_constants;
+        opts.early_cut = args.early_cut;
         const auto start = std::chrono::steady_clock::now();
         auto result = gp::full_gp(data, opts);
         const auto stop = std::chrono::steady_clock::now();
@@ -134,6 +142,8 @@ int main(int argc, char** argv) {
             options.max_depth = 4;
             options.generations = 5;
             options.seed = args.seed;
+            options.fold_constants = args.fold_constants;
+            options.early_cut = args.early_cut;
             gp::GPResult result = gp::full_gp(data, options);
             std::cout << "MSE final: " << result.best_fitness << '\n';
             std::cout << "Expresion: " << result.best->expression() << '\n';

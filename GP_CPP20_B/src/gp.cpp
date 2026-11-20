@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <numeric>
@@ -43,16 +44,26 @@ Tree random_leaf(std::size_t variable_count, std::mt19937_64& rng) {
     return Node::variable(random_integer<std::size_t>(rng, 0, variable_count - 1));
 }
 
+// El nodo padre se reserva ANTES que sus hijos, asi que el arbol queda en memoria en
+// preorden (raiz, subarbol izquierdo, subarbol derecho): el mismo orden en que lo recorren
+// clone, crossover y la evaluacion. Clonar un padre "frio" lee la memoria en secuencia y
+// el procesador la adelanta (en el benchmark de crossover, 1.4 a 1.9 veces mas rapido).
+// El generador se consume en el mismo orden que antes (operador, hijo izquierdo, hijo
+// derecho), asi que los arboles son identicos.
 Tree grow_impl(int remaining_depth, std::size_t variable_count,
                std::mt19937_64& rng, bool full) {
     if (remaining_depth == 0 || (!full && random_integer<int>(rng, 0, 3) == 0)) {
         return random_leaf(variable_count, rng);
     }
     const Kind kind = random_operator(rng);
-    Tree left = grow_impl(remaining_depth - 1, variable_count, rng, full);
-    if (kind == Kind::Sqrt) return Node::unary(kind, std::move(left));
-    Tree right = grow_impl(remaining_depth - 1, variable_count, rng, full);
-    return Node::binary(kind, std::move(left), std::move(right));
+    auto node = std::make_unique<Node>();
+    node->kind = kind;
+    node->direct = false;
+    node->left = grow_impl(remaining_depth - 1, variable_count, rng, full);
+    if (kind != Kind::Sqrt) {
+        node->right = grow_impl(remaining_depth - 1, variable_count, rng, full);
+    }
+    return node;
 }
 
 // Clona `src` en `dest` y, en la MISMA pasada, registra en preorden (raiz,
@@ -242,57 +253,102 @@ bool looks_like_header(const std::string& line) {
 #define GP_FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
+// Las cuatro operaciones binarias con el resultado elegido por INDICE, sin saltos
+// condicionales. Un switch por nodo es un salto que el procesador debe adivinar; en un
+// arbol grande (miles de nodos) no puede memorizar la secuencia y falla muy seguido
+// (cada fallo cuesta ~15-20 ciclos). Calcular las cuatro y elegir una cuesta menos.
+// Son las mismas operaciones IEEE sobre los mismos operandos: resultado identico bit a bit.
+GP_FORCE_INLINE double apply_binary(Kind kind, double a, double b) noexcept {
+    double r[4];
+    r[0] = a + b;                                          // Kind::Add
+    r[1] = a - b;                                          // Kind::Subtract
+    r[2] = a * b;                                          // Kind::Multiply
+    r[3] = a / (std::abs(b) < kEpsilon ? kEpsilon : b);    // Kind::Divide (protegida)
+    return r[static_cast<int>(kind) - static_cast<int>(Kind::Add)];
+}
+
+// Valor de un nodo `direct` (constante, variable o subarbol plegado) sin saltos: se
+// elige la DIRECCION a leer (instruccion cmov) y se hace una sola lectura.
+GP_FORCE_INLINE double direct_value(const Node& c, const double* x) noexcept {
+    const double* p = (c.kind == Kind::Variable) ? x + c.variable_index : &c.value;
+    return *p;
+}
+
 // Misma evaluacion que Node::eval (mismas operaciones, mismo resultado bit a bit) pero
-// sin comprobar el indice de variable (fitness lo valida una vez por arbol) y con un
-// puntero simple en vez de std::span. Ademas, las hojas (constantes y variables) se
-// resuelven en el propio nodo padre, sin llamada recursiva: como cerca de la mitad
-// de los nodos son hojas, esto elimina casi la mitad de las llamadas. Sigue siendo
-// una evaluacion recursiva, fila por fila, del arbol de punteros.
+// sin comprobar el indice de variable (fitness lo valida una vez por arbol), con un
+// puntero simple en vez de std::span, sin saltos para elegir el operador y con las hojas
+// resueltas en el propio nodo padre (sin llamada recursiva para ellas). Sigue siendo una
+// evaluacion recursiva, fila por fila, del arbol de punteros.
 double eval_unchecked(const Node& n, const double* x) noexcept;
 
 GP_FORCE_INLINE double operand(const Node& c, const double* x) noexcept {
-    switch (c.kind) {
-        case Kind::Constant: return c.value;
-        case Kind::Variable: return x[c.variable_index];
-        default: return eval_unchecked(c, x);
-    }
+    if (c.direct) return direct_value(c, x);
+    return eval_unchecked(c, x);
 }
 
 double eval_unchecked(const Node& n, const double* x) noexcept {
-    switch (n.kind) {
-        case Kind::Constant: return n.value;
-        case Kind::Variable: return x[n.variable_index];
-        case Kind::Sqrt: return std::sqrt(std::max(operand(*n.left, x), 0.0));
-        case Kind::Add: {
-            const double a = operand(*n.left, x);
-            const double b = operand(*n.right, x);
-            return a + b;
-        }
-        case Kind::Subtract: {
-            const double a = operand(*n.left, x);
-            const double b = operand(*n.right, x);
-            return a - b;
-        }
-        case Kind::Multiply: {
-            const double a = operand(*n.left, x);
-            const double b = operand(*n.right, x);
-            return a * b;
-        }
-        case Kind::Divide: {
-            const double a = operand(*n.left, x);
-            const double b = operand(*n.right, x);
-            return a / (std::abs(b) < kEpsilon ? kEpsilon : b);
-        }
-    }
-    return 0.0;  // inalcanzable: todos los Kind estan cubiertos
+    if (n.direct) return direct_value(n, x);
+    const double a = operand(*n.left, x);
+    if (n.kind == Kind::Sqrt) return std::sqrt(std::max(a, 0.0));
+    const double b = operand(*n.right, x);
+    return apply_binary(n.kind, a, b);
 }
 
-// Mayor indice de variable del arbol, o -1 si no tiene variables.
-long long max_variable_index(const Node& n) {
-    long long m = n.kind == Kind::Variable ? static_cast<long long>(n.variable_index) : -1;
-    if (n.left) m = std::max(m, max_variable_index(*n.left));
-    if (n.right) m = std::max(m, max_variable_index(*n.right));
+// Una sola pasada por el arbol antes de evaluarlo (ya existia para validar los indices de
+// variable). Devuelve el mayor indice de variable, -1 si no hay variables. Ademas marca
+// `direct` en cada nodo y, con fold = true, PLIEGA los subarboles sin variables: su valor
+// es el mismo en todas las filas, asi que se calcula una vez (con las mismas operaciones
+// protegidas, mismo resultado bit a bit) y la evaluacion lo lee sin recorrerlos.
+long long prepare_tree(Node& n, bool fold) {
+    if (n.kind == Kind::Constant) { n.direct = true; return -1; }
+    if (n.kind == Kind::Variable) {
+        n.direct = true;
+        return static_cast<long long>(n.variable_index);
+    }
+    n.direct = false;
+    long long m = prepare_tree(*n.left, fold);
+    if (n.right) m = std::max(m, prepare_tree(*n.right, fold));
+    if (fold && m < 0) {
+        // Hijos constantes o ya plegados: su valor esta en `value`.
+        const double a = n.left->value;
+        n.value = n.kind == Kind::Sqrt ? std::sqrt(std::max(a, 0.0))
+                                       : apply_binary(n.kind, a, n.right->value);
+        n.direct = true;
+    }
     return m;
+}
+
+// MSE fila por fila. Si `cut` es finito, deja de evaluar en cuanto el MSE parcial
+// (suma/n) lo supera: las filas restantes solo pueden sumar (cuadrados >= 0), asi que
+// el MSE final seria aun mayor que `cut`, y se devuelve +infinito.
+double mse_impl(const Node& root, const Dataset& data, bool fold, double cut) {
+    if (data.x.empty() || data.x.size() != data.y.size()) {
+        throw std::invalid_argument("Dataset vacio o inconsistente");
+    }
+    const std::size_t variables = data.variables();
+    for (const auto& row : data.x) {
+        if (row.size() != variables) {
+            throw std::invalid_argument("Dimensiones inconsistentes del dataset");
+        }
+    }
+    // Los nodos se crean siempre como objetos no constantes (make_unique), asi que
+    // actualizar sus campos de evaluacion a traves de const_cast esta bien definido.
+    // El indice de variable se valida UNA vez por arbol, no en cada acceso.
+    if (prepare_tree(const_cast<Node&>(root), fold) >= static_cast<long long>(variables)) {
+        throw std::out_of_range("Indice de variable fuera del vector");
+    }
+    const double rows = static_cast<double>(data.x.size());
+    double sum = 0.0;
+    for (std::size_t i = 0; i < data.x.size(); ++i) {
+        const double predicted = eval_unchecked(root, data.x[i].data());
+        const double difference = data.y[i] - predicted;
+        const double squared = difference * difference;
+        if (!std::isfinite(squared)) return std::numeric_limits<double>::infinity();
+        sum += squared;
+        if (!std::isfinite(sum)) return std::numeric_limits<double>::infinity();
+        if (sum / rows > cut) return std::numeric_limits<double>::infinity();
+    }
+    return sum / rows;
 }
 
 struct Individual {
@@ -326,6 +382,7 @@ std::unique_ptr<Node> Node::unary(Kind kind, Tree child) {
     }
     auto node = std::make_unique<Node>();
     node->kind = kind;
+    node->direct = false;
     node->left = std::move(child);
     return node;
 }
@@ -337,6 +394,7 @@ std::unique_ptr<Node> Node::binary(Kind kind, Tree a, Tree b) {
     }
     auto node = std::make_unique<Node>();
     node->kind = kind;
+    node->direct = false;
     node->left = std::move(a);
     node->right = std::move(b);
     return node;
@@ -447,30 +505,8 @@ Tree grow_full(int exact_depth, std::size_t variable_count, std::mt19937_64& rng
     return grow_impl(exact_depth, variable_count, rng, true);
 }
 
-double fitness(const Node& root, const Dataset& data) {
-    if (data.x.empty() || data.x.size() != data.y.size()) {
-        throw std::invalid_argument("Dataset vacio o inconsistente");
-    }
-    const std::size_t variables = data.variables();
-    for (const auto& row : data.x) {
-        if (row.size() != variables) {
-            throw std::invalid_argument("Dimensiones inconsistentes del dataset");
-        }
-    }
-    // El indice de variable se valida UNA vez por arbol, no en cada acceso.
-    if (max_variable_index(root) >= static_cast<long long>(variables)) {
-        throw std::out_of_range("Indice de variable fuera del vector");
-    }
-    double sum = 0.0;
-    for (std::size_t i = 0; i < data.x.size(); ++i) {
-        const double predicted = eval_unchecked(root, data.x[i].data());
-        const double difference = data.y[i] - predicted;
-        const double squared = difference * difference;
-        if (!std::isfinite(squared)) return std::numeric_limits<double>::infinity();
-        sum += squared;
-        if (!std::isfinite(sum)) return std::numeric_limits<double>::infinity();
-    }
-    return sum / static_cast<double>(data.x.size());
+double fitness(const Node& root, const Dataset& data, bool fold_constants) {
+    return mse_impl(root, data, fold_constants, std::numeric_limits<double>::infinity());
 }
 
 std::pair<Tree, Tree> crossover(const Node& a, const Node& b,
@@ -568,7 +604,7 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
     population.reserve(N);
     for (std::size_t i = 0; i < N; ++i) {
         Tree tree = grow_full(options.max_depth, data.variables(), rng);
-        double score = fitness(*tree, data);
+        double score = fitness(*tree, data, options.fold_constants);
         population.push_back({std::move(tree), score});
     }
 
@@ -592,13 +628,39 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
 
         std::vector<Individual> offspring;
         offspring.reserve(N);
+
+        // Corte temprano EXACTO. Solo el mejor 50% de los hijos sobrevive. `best_half`
+        // (monticulo de maximos) guarda los N/2 mejores MSE vistos hasta ahora; su tope
+        // es el (N/2)-esimo mejor y solo puede bajar. Un hijo cuyo MSE parcial ya supera
+        // ese tope terminaria peor que N/2 hijos, asi que nunca sobreviviria: se deja de
+        // evaluar y recibe +infinito. Los sobrevivientes conservan su MSE exacto y, con el
+        // orden estable de abajo, el GP da exactamente el mismo resultado con o sin corte.
+        std::vector<double> best_half;
+        best_half.reserve(N / 2);
+        const auto score_child = [&](const Node& tree) {
+            const bool full_heap = best_half.size() == N / 2;
+            const double cut = (options.early_cut && full_heap)
+                                   ? best_half.front()
+                                   : std::numeric_limits<double>::infinity();
+            const double score = mse_impl(tree, data, options.fold_constants, cut);
+            if (!full_heap) {
+                best_half.push_back(score);
+                std::push_heap(best_half.begin(), best_half.end());
+            } else if (score < best_half.front()) {
+                std::pop_heap(best_half.begin(), best_half.end());
+                best_half.back() = score;
+                std::push_heap(best_half.begin(), best_half.end());
+            }
+            return score;
+        };
+
         // N/4 cruces x 2 hijos = N/2 descendientes por crossover.
         for (std::size_t i = 0; i < N / 4; ++i) {
             const Node& p1 = pick_parent(); // orden explicito de seleccion
             const Node& p2 = pick_parent();
             auto [a, b] = depth_protected_crossover(p1, p2, options.max_depth, rng);
-            const double fa = fitness(*a, data);
-            const double fb = fitness(*b, data);
+            const double fa = score_child(*a);
+            const double fb = score_child(*b);
             offspring.push_back({std::move(a), fa});
             offspring.push_back({std::move(b), fb});
         }
@@ -606,14 +668,17 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
         for (std::size_t i = 0; i < N / 2; ++i) {
             Tree mutated = depth_protected_mutation(pick_parent(), data.variables(),
                                                      options.max_depth, rng);
-            const double score = fitness(*mutated, data);
+            const double score = score_child(*mutated);
             offspring.push_back({std::move(mutated), score});
         }
 
+        // Orden ESTABLE (como A y C): en empates conserva el orden de creacion. Con
+        // nth_element el orden de los sobrevivientes dependia de la implementacion de la
+        // biblioteca estandar y de TODOS los puntajes (incluso los descartados), y el torneo
+        // elige por posicion; asi el resultado ya no depende de eso ni del corte temprano.
         const auto keep_half = [](std::vector<Individual>& group) {
-            const auto midpoint = group.begin() + static_cast<std::ptrdiff_t>(group.size() / 2);
-            std::nth_element(group.begin(), midpoint, group.end(), better);
-            group.erase(midpoint, group.end());
+            std::stable_sort(group.begin(), group.end(), better);
+            group.erase(group.begin() + static_cast<std::ptrdiff_t>(group.size() / 2), group.end());
         };
         keep_half(population);
         keep_half(offspring);
@@ -745,6 +810,121 @@ void run_tests() {
     for (std::size_t i = 1; i < run.best_fitness_per_generation.size(); ++i) {
         check(run.best_fitness_per_generation[i] <= run.best_fitness_per_generation[i - 1],
               "elitismo: mejor MSE no aumenta");
+    }
+
+    // --- Optimizaciones: mismo resultado bit a bit -----------------------------
+    const auto same_bits = [](double a, double b) { return std::memcmp(&a, &b, sizeof a) == 0; };
+    // MSE de referencia con Node::eval (switch por nodo, sin plegado ni atajos).
+    const auto reference_mse = [](const Node& tree, const Dataset& d) {
+        double sum = 0.0;
+        for (std::size_t i = 0; i < d.x.size(); ++i) {
+            const double diff = d.y[i] - tree.eval(d.x[i]);
+            const double sq = diff * diff;
+            if (!std::isfinite(sq)) return std::numeric_limits<double>::infinity();
+            sum += sq;
+            if (!std::isfinite(sum)) return std::numeric_limits<double>::infinity();
+        }
+        return sum / static_cast<double>(d.x.size());
+    };
+    // Datos con ceros, negativos y magnitudes extremas (division protegida, raiz de
+    // negativos, desbordes).
+    Dataset hard;
+    {
+        std::mt19937_64 r2(7);
+        std::uniform_real_distribution<double> u(-3.0, 3.0);
+        const double scales[] = {1e-13, 1e-8, 1.0, 1.0, 1e3, 1e150};
+        for (int i = 0; i < 60; ++i) {
+            std::vector<double> row;
+            for (int k = 0; k < 3; ++k) {
+                row.push_back((i + k) % 7 == 0 ? 0.0 : u(r2) * scales[(i * 3 + k) % 6]);
+            }
+            hard.x.push_back(row);
+            hard.y.push_back(u(r2));
+        }
+    }
+    int mismatches = 0;
+    for (int t = 0; t < 400; ++t) {
+        Tree tree = (t % 2 == 0) ? grow_random(1 + t % 10, 3, rng) : grow_full(t % 8, 3, rng);
+        const double ref = reference_mse(*tree, hard);
+        for (bool fold : {true, false}) {
+            if (!same_bits(fitness(*tree, hard, fold), ref)) ++mismatches;
+        }
+        // Los hijos heredan marcas de plegado de sus padres; fitness debe recalcularlas.
+        Tree other = grow_random(4, 3, rng);
+        auto [c1, c2] = crossover(*tree, *other, rng);
+        if (!same_bits(fitness(*c1, hard), reference_mse(*c1, hard))) ++mismatches;
+        if (!same_bits(fitness(*c2, hard), reference_mse(*c2, hard))) ++mismatches;
+        Tree m1 = mutation(*tree, 3, rng);
+        if (!same_bits(fitness(*m1, hard), reference_mse(*m1, hard))) ++mismatches;
+    }
+    check(mismatches == 0, "evaluacion sin saltos y plegado: MSE identico a Node::eval");
+
+    Tree folded = parse_expression("((sqrt(0.25) + 0.1) * (x1 - (1 / 0)))");
+    fitness(*folded, data);
+    check(folded->left->direct && folded->left->value == 0.6 && !folded->direct
+              && !folded->right->direct && folded->right->right->direct
+              && folded->right->right->value == 1e12,
+          "plegado de constantes: valores y marcas");
+    check(folded->expression() == "((sqrt(0.25) + 0.1) * (x1 - (1 / 0)))" && node_count(*folded) == 10,
+          "el plegado no cambia la expresion ni el tamano");
+    fitness(*folded, data, false);
+    check(!folded->left->direct, "sin plegado solo las hojas se leen directo");
+    check(fitness(*parse_expression("((1e300 * 1e300) - (1e300 * 1e300))"), data) ==
+              std::numeric_limits<double>::infinity(),
+          "subarbol constante no finito: MSE = +Inf");
+    bool threw = false;
+    try {
+        fitness(*parse_expression("(x3 + 1)"), data);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    check(threw, "variable fuera del dataset es rechazada");
+
+    // Generacion en preorden: mismo consumo del generador que la version anterior.
+    {
+        std::function<Tree(int, std::size_t, std::mt19937_64&, bool)> old_grow =
+            [&](int rem, std::size_t vars, std::mt19937_64& r, bool full) -> Tree {
+            if (rem == 0 || (!full && random_integer<int>(r, 0, 3) == 0)) return random_leaf(vars, r);
+            const Kind kind = random_operator(r);
+            Tree left = old_grow(rem - 1, vars, r, full);
+            if (kind == Kind::Sqrt) return Node::unary(kind, std::move(left));
+            Tree right = old_grow(rem - 1, vars, r, full);
+            return Node::binary(kind, std::move(left), std::move(right));
+        };
+        bool same = true;
+        for (int seed = 1; seed <= 20; ++seed) {
+            std::mt19937_64 r_new(seed);
+            std::mt19937_64 r_old(seed);
+            for (int depth = 0; depth <= 7; ++depth) {
+                same &= grow_full(depth, 3, r_new)->expression(17) ==
+                        old_grow(depth, 3, r_old, true)->expression(17);
+                same &= grow_random(depth, 2, r_new)->expression(17) ==
+                        old_grow(depth, 2, r_old, false)->expression(17);
+            }
+            same &= r_new() == r_old();
+        }
+        check(same, "grow en preorden: mismos arboles y mismo consumo del generador");
+    }
+
+    // El corte temprano y el plegado no cambian el GP.
+    for (std::uint64_t seed : {1u, 2u, 3u}) {
+        GPOptions o;
+        o.population_size = 200;
+        o.max_depth = 6;
+        o.generations = 6;
+        o.seed = seed;
+        GPOptions plain = o;
+        plain.early_cut = false;
+        plain.fold_constants = false;
+        GPResult fast = full_gp(hard, o);
+        GPResult slow = full_gp(hard, plain);
+        bool same = fast.best_fitness_per_generation.size() == slow.best_fitness_per_generation.size();
+        for (std::size_t i = 0; same && i < fast.best_fitness_per_generation.size(); ++i) {
+            same = same_bits(fast.best_fitness_per_generation[i], slow.best_fitness_per_generation[i]);
+        }
+        check(same && fast.best->expression(17) == slow.best->expression(17)
+                  && same_bits(fast.best_fitness, slow.best_fitness),
+              "corte temprano y plegado: mismo GP que sin ellos");
     }
 }
 
