@@ -73,6 +73,26 @@ devuelve el mismo arbol; para las pruebas hay `deep_copy_tree`.
 - **El resultado no cambia**: mismas operaciones, en el mismo orden y sumando fila por
   fila como A y B. El MSE es identico bit a bit con y sin cache.
 
+- **El dataset no debe modificarse despues de crearse.** El cache de cada nodo se asocia
+  al identificador del `Dataset`; si se cambiaran sus valores, un nodo con cache devolveria
+  el resultado anterior. El programa lee el CSV una vez y nunca lo modifica, y el
+  constructor copia los datos. `--cache-mb=0` (o `cache_min_size = NO_CACHE`) no lee ni
+  escribe ningun cache, ni siquiera uno que ya existiera.
+
+### 4. Subarboles constantes precalculados (plegado de constantes)
+
+- Cada nodo interno sabe, al crearse y en O(1), si su subarbol solo tiene constantes
+  (ninguna variable). En ese caso calcula su valor **una vez**, con los mismos operadores
+  protegidos, y lo guarda. Ejemplo: en `((sqrt(0.25) + 0.1) * x1)`, el nodo
+  `(sqrt(0.25) + 0.1)` vale 0.6 para todas las filas.
+- Al evaluar, ese nodo devuelve el valor guardado sin recorrer su subarbol en cada fila.
+  Sigue siendo evaluacion fila por fila; no hay lotes.
+- Los nodos originales se conservan: `expression`, profundidad, tamano y puntos de corte
+  son los mismos, y el MSE es identico bit a bit (el valor se calcula con las mismas
+  operaciones que la evaluacion normal). Los nodos constantes no ocupan cache.
+- Como los nodos son inmutables, el valor nunca queda desactualizado: un hijo de crossover
+  o de mutacion crea nodos nuevos en el camino, y cada uno calcula su propio valor.
+
 ### Mismo comportamiento que A
 
 C consume el generador aleatorio en el mismo orden que A y elige el punto de corte
@@ -148,6 +168,11 @@ compilacion JIT de Julia no se cuente en el tiempo**.
   hijos son correctos, solo se crean los nodos del camino y los padres no cambian.
 - Versiones protegidas: respetan `max_depth`, incluso al limite.
 - GP: elitismo, y el cache no altera el resultado.
+- **Plegado de constantes:** valores y marcas en un ejemplo conocido; que no cambie
+  `expression` ni el tamano; que en 300 arboles aleatorios (incluidos arboles solo de
+  constantes) cada subarbol constante valga, bit a bit, lo mismo que recorrerlo; y que un
+  subarbol constante no finito (Inf - Inf) siga dando MSE = +Inf.
+- `NO_CACHE` da el MSE correcto aunque los nodos tengan cache de una evaluacion anterior.
 
 `tools/cross_check.jl` carga A y C en un solo proceso y comprueba:
 
@@ -179,6 +204,6 @@ arboles en los tres datasets. Compara el MSE bit a bit, la profundidad y el nume
 2. Unir subarboles identicos creados por separado (hash-consing), no solo los heredados.
    Es la otra mitad de la idea de Handley; ahorra memoria, pero cuesta calcular hashes al
    crear cada nodo.
-3. Guardar los resultados de subarboles sin variables como una constante (plegado de
-   constantes).
+3. Medir la ganancia del plegado de constantes con el dataset oficial (comparar contra la
+   version anterior, guardada en `respaldo_20261119_2010/GP_JL_C`).
 4. Repetir los benchmarks con varias semillas y reportar media y desviacion.
