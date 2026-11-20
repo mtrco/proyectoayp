@@ -236,25 +236,63 @@ bool looks_like_header(const std::string& line) {
     }
 }
 
+#if defined(_MSC_VER)
+#define GP_FORCE_INLINE __forceinline
+#else
+#define GP_FORCE_INLINE inline __attribute__((always_inline))
+#endif
+
 // Misma evaluacion que Node::eval (mismas operaciones, mismo resultado bit a bit) pero
-// sin comprobar el indice de variable y con un puntero simple en vez de std::span.
-// Solo se usa despues de evaluar la primera fila con Node::eval: como ningun operador
-// omite a un hijo, esa fila ya visito TODAS las variables del arbol y valido sus indices.
+// sin comprobar el indice de variable (fitness lo valida una vez por arbol) y con un
+// puntero simple en vez de std::span. Ademas, las hojas (constantes y variables) se
+// resuelven en el propio nodo padre, sin llamada recursiva: como cerca de la mitad
+// de los nodos son hojas, esto elimina casi la mitad de las llamadas. Sigue siendo
+// una evaluacion recursiva, fila por fila, del arbol de punteros.
+double eval_unchecked(const Node& n, const double* x) noexcept;
+
+GP_FORCE_INLINE double operand(const Node& c, const double* x) noexcept {
+    switch (c.kind) {
+        case Kind::Constant: return c.value;
+        case Kind::Variable: return x[c.variable_index];
+        default: return eval_unchecked(c, x);
+    }
+}
+
 double eval_unchecked(const Node& n, const double* x) noexcept {
     switch (n.kind) {
         case Kind::Constant: return n.value;
         case Kind::Variable: return x[n.variable_index];
-        case Kind::Sqrt: return std::sqrt(std::max(eval_unchecked(*n.left, x), 0.0));
-        case Kind::Add: return eval_unchecked(*n.left, x) + eval_unchecked(*n.right, x);
-        case Kind::Subtract: return eval_unchecked(*n.left, x) - eval_unchecked(*n.right, x);
-        case Kind::Multiply: return eval_unchecked(*n.left, x) * eval_unchecked(*n.right, x);
+        case Kind::Sqrt: return std::sqrt(std::max(operand(*n.left, x), 0.0));
+        case Kind::Add: {
+            const double a = operand(*n.left, x);
+            const double b = operand(*n.right, x);
+            return a + b;
+        }
+        case Kind::Subtract: {
+            const double a = operand(*n.left, x);
+            const double b = operand(*n.right, x);
+            return a - b;
+        }
+        case Kind::Multiply: {
+            const double a = operand(*n.left, x);
+            const double b = operand(*n.right, x);
+            return a * b;
+        }
         case Kind::Divide: {
-            const double a = eval_unchecked(*n.left, x);
-            const double b = eval_unchecked(*n.right, x);
+            const double a = operand(*n.left, x);
+            const double b = operand(*n.right, x);
             return a / (std::abs(b) < kEpsilon ? kEpsilon : b);
         }
     }
     return 0.0;  // inalcanzable: todos los Kind estan cubiertos
+}
+
+// Mayor indice de variable del arbol, o -1 si no tiene variables.
+long long max_variable_index(const Node& n) {
+    long long m = n.kind == Kind::Variable ? static_cast<long long>(n.variable_index) : -1;
+    if (n.left) m = std::max(m, max_variable_index(*n.left));
+    if (n.right) m = std::max(m, max_variable_index(*n.right));
+    return m;
 }
 
 struct Individual {
@@ -413,14 +451,19 @@ double fitness(const Node& root, const Dataset& data) {
     if (data.x.empty() || data.x.size() != data.y.size()) {
         throw std::invalid_argument("Dataset vacio o inconsistente");
     }
-    double sum = 0.0;
-    for (std::size_t i = 0; i < data.x.size(); ++i) {
-        if (data.x[i].size() != data.variables()) {
+    const std::size_t variables = data.variables();
+    for (const auto& row : data.x) {
+        if (row.size() != variables) {
             throw std::invalid_argument("Dimensiones inconsistentes del dataset");
         }
-        // Fila 0: evaluacion con comprobaciones (valida los indices de variable).
-        const double predicted = i == 0 ? root.eval(data.x[i])
-                                        : eval_unchecked(root, data.x[i].data());
+    }
+    // El indice de variable se valida UNA vez por arbol, no en cada acceso.
+    if (max_variable_index(root) >= static_cast<long long>(variables)) {
+        throw std::out_of_range("Indice de variable fuera del vector");
+    }
+    double sum = 0.0;
+    for (std::size_t i = 0; i < data.x.size(); ++i) {
+        const double predicted = eval_unchecked(root, data.x[i].data());
         const double difference = data.y[i] - predicted;
         const double squared = difference * difference;
         if (!std::isfinite(squared)) return std::numeric_limits<double>::infinity();

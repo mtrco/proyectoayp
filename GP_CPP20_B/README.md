@@ -157,10 +157,14 @@ una comprobacion repetida:
   devuelve al sistema hasta que termina el programa.
 - **Nodo de 32 bytes** (antes 40). `value` y `variable_index` comparten una union,
   porque un nodo es constante o variable, nunca ambas cosas.
-- **Evaluacion ligera.** La primera fila se evalua con `Node::eval`, que comprueba los
-  indices de variable. Como ningun operador omite a un hijo, esa fila ya valido todas las
-  variables, asi que las demas filas usan una version sin comprobaciones y con un
-  puntero simple en lugar de `std::span`.
+- **Evaluacion ligera.** `fitness` valida los indices de variable una sola vez por
+  arbol y despues evalua todas las filas con una version sin comprobaciones y con un
+  puntero simple en lugar de `std::span`. Las hojas (constantes y variables) se leen
+  directamente desde el nodo padre (`operand`, forzada en linea), sin llamada
+  recursiva: cerca de la mitad de los nodos son hojas, asi que se evita casi la mitad
+  de las llamadas. Sigue siendo una evaluacion recursiva, fila por fila, con las mismas
+  operaciones en el mismo orden, por lo que el MSE es identico bit a bit. Con MSVC es la
+  optimizacion que mas pesa en el GP completo (unas 1.6 veces en el equipo de pruebas).
 - **Verificado:** `--test` pasa; `cross_check` contra C++ C da 0 fallos; y `--bench-gp`
   da el mismo mejor MSE y la misma expresion que antes en las profundidades 7, 9 y 12.
 - **Medido** en el contenedor Linux (g++ 13.3 `-O3`, un hilo). En Windows el heap del
