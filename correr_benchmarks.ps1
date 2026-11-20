@@ -18,6 +18,9 @@
 #                              -1 (por defecto) = elegir segun la RAM: B necesita ~7 GB con
 #                              10,000 arboles de profundidad 15, asi que con menos de 12 GB usa 2500.
 #   -Julia "julia"             ejecutable de Julia
+#   -SinPendientes             GP completo sin plegado de constantes ni corte temprano
+#                              (--no-fold --no-cut en B y C). Mismo resultado; usarlo si el
+#                              profesor no acepta esas dos optimizaciones.
 #
 # Regla confirmada: sin paralelismo. Todo corre en un solo hilo.
 
@@ -33,6 +36,7 @@ param(
     [switch]$SoloCrossover,
     [switch]$SoloGP,
     [switch]$IncluirA,
+    [switch]$SinPendientes,
     [int]$ParesEnMemoria = -1
 )
 
@@ -91,6 +95,9 @@ if ($LASTEXITCODE -ne 0) { throw "verificar_con_b encontro diferencias entre B y
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
 $ram = [math]::Round($ramGB, 1)
 $juliaVersion = & $Julia --version
+# Sin comillas dobles dentro de -e: Windows PowerShell 5.1 las altera al pasarlas a Julia.
+$juliaThreads = (& $Julia @JuliaFlags -e 'println(Threads.nthreads()); println(Threads.ngcthreads())') -join " / "
+$pendientes = if ($SinPendientes) { "apagados (--no-fold --no-cut)" } else { "activos" }
 @(
     "Fecha: $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
     "CPU: $($cpu.Name)",
@@ -98,6 +105,8 @@ $juliaVersion = & $Julia --version
     "RAM: $ram GB",
     "Windows: $((Get-CimInstance Win32_OperatingSystem).Caption)",
     "Julia: $juliaVersion (opciones: $($JuliaFlags -join ' '))",
+    "Julia hilos (computo / recolector de basura): $juliaThreads",
+    "Plegado de constantes y corte temprano (GP completo): $pendientes",
     "Semillas: $($Seeds -join ',')",
     "Generaciones: $Generations",
     "Variables (crossover): $Variables",
@@ -124,8 +133,9 @@ if (-not $SoloCrossover) {
     foreach ($s in $Seeds) {
         $common = @("--bench-gp", "--data=$Data", "--population=5000", "--depths=$GPDepths",
                     "--generations=$Generations", "--seed=$s")
-        Invoke-Bench "B" $B $common $s "$out\gp_B.csv"
-        Invoke-Bench "C" $Julia ($JuliaFlags + $CMain + $common) $s "$out\gp_C.csv"
+        $extra = if ($SinPendientes) { @("--no-fold", "--no-cut") } else { @() }
+        Invoke-Bench "B" $B ($common + $extra) $s "$out\gp_B.csv"
+        Invoke-Bench "C" $Julia ($JuliaFlags + $CMain + $common + $extra) $s "$out\gp_C.csv"
         if ($IncluirA) { Invoke-Bench "A" $Julia ($JuliaFlags + $AMain + $common) $s "$out\gp_A.csv" }
     }
 }
