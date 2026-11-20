@@ -9,7 +9,8 @@ using Printf
 using Random
 
 const HELP = """
-GP C - Julia, implementacion alternativa (arboles inmutables compartidos + cache de resultados)
+GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en arreglos,
+       subarboles compartidos + cache de resultados)
 
   julia main.jl --test [-v]
   julia main.jl --demo [--data=data/ejemplo.csv]
@@ -17,6 +18,7 @@ GP C - Julia, implementacion alternativa (arboles inmutables compartidos + cache
                                   [--seed=42] [--batch-pairs=0]
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000] [--depths=7,9,12]
                            [--generations=10] [--seed=42] [--cache-mb=1024] [--cache-min-size=0]
+                           [--no-fold] [--no-cut]
   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
   julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=42] [--full]
@@ -25,6 +27,9 @@ GP C - Julia, implementacion alternativa (arboles inmutables compartidos + cache
                   (0 = los 10000 arboles a la vez, protocolo acordado; 2500 = 5000).
 --cache-mb:       presupuesto aproximado del cache de resultados del GP (0 = sin cache).
 --cache-min-size: tamano minimo de subarbol que guarda cache (0 = automatico segun --cache-mb).
+--no-fold:        no plegar los subarboles sin variables.
+--no-cut:         sin corte temprano exacto de los hijos que no pueden sobrevivir.
+                  Ambas optimizaciones dan el mismo resultado; se apagan si el profesor no las acepta.
 """
 
 const INT_OPTIONS = Set(["trees", "population", "generations", "variables", "seed",
@@ -37,10 +42,15 @@ function parse_args(args)
         "data" => joinpath(@__DIR__, "data", "ejemplo.csv"), "depths" => "", "file" => "",
         "trees" => 10000, "population" => 5000, "generations" => 10, "variables" => 2,
         "seed" => 42, "batch-pairs" => 0, "count" => 100, "depth" => 5,
-        "cache-mb" => 1024, "cache-min-size" => 0, "full" => false, "verbose" => false)
+        "cache-mb" => 1024, "cache-min-size" => 0, "full" => false, "verbose" => false,
+        "fold" => true, "cut" => true)
     for arg in args[2:end]
         if arg == "--full"
             o["full"] = true
+        elseif arg == "--no-fold"
+            o["fold"] = false
+        elseif arg == "--no-cut"
+            o["cut"] = false
         elseif arg == "-v"
             o["verbose"] = true
         elseif startswith(arg, "--") && occursin('=', arg)
@@ -74,7 +84,8 @@ function main(args)
     elseif mode == "--demo"
         data = read_csv(o["data"])
         result = full_gp(data, GPOptions(population_size=40, max_depth=4, generations=5,
-                                         seed=o["seed"]))
+                                         seed=o["seed"], fold_constants=o["fold"],
+                                         early_cut=o["cut"]))
         @printf("MSE final: %.6g\n", result.best_fitness)
         println("Expresion: ", expression(result.best))
         println("Mejor MSE por generacion:")
@@ -99,7 +110,8 @@ function main(args)
         for depth in parse_depths(o["depths"], "7,9,12")
             options = GPOptions(population_size=o["population"], max_depth=depth,
                                 generations=o["generations"], seed=o["seed"],
-                                cache_mb=o["cache-mb"], cache_min_size=o["cache-min-size"])
+                                cache_mb=o["cache-mb"], cache_min_size=o["cache-min-size"],
+                                fold_constants=o["fold"], early_cut=o["cut"])
             GC.gc()  # memoria de la corrida anterior, fuera del cronometro
             t0 = time_ns()
             result = full_gp(data, options)
