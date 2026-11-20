@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="500" viewBox="0 0 880 500" role="img" aria-label="Benchmark de crossover de C: microsegundos por cruce">
+<title>Benchmark de crossover de C: microsegundos por cruce</title>
+<style>
+text { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
+.bg { fill: #fcfcfb; }
+.card { fill: #f4f3ef; stroke: #e2e1dc; }
+.t { fill: #0b0b0b; }
+.t2 { fill: #52514e; }
+.t3 { fill: #7a7974; }
+.edge { stroke: #9b9a94; stroke-width: 2; fill: none; }
+.edge2 { stroke: #c9c8c2; stroke-width: 2; fill: none; }
+.grid { stroke: #e6e5e0; stroke-width: 1; }
+.axis { stroke: #b9b8b2; stroke-width: 1; }
+.op { fill: #6366f1; } .opt { fill: #ffffff; }
+.var { fill: #3fb874; } .vart { fill: #08321b; }
+.cst { fill: #d3d4de; } .cstt { fill: #23242a; }
+.fold { fill: #f6c445; } .foldt { fill: #3a2a00; }
+.s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; }
+.s1s { stroke: #2a78d6; } .s2s { stroke: #eb6834; } .s3s { stroke: #1baf7a; }
+.o1 { fill: #86b6ef; } .o2 { fill: #2a78d6; } .o3 { fill: #184f95; }
+.ring { fill: none; stroke-width: 3; }
+.dash { fill: none; stroke-width: 2; stroke-dasharray: 6 5; }
+.hl { fill: #eb6834; fill-opacity: 0.10; stroke: #eb6834; stroke-width: 2; stroke-dasharray: 6 5; }
+.hlb { fill: #2a78d6; fill-opacity: 0.08; stroke: #2a78d6; stroke-width: 2; stroke-dasharray: 6 5; }
+.good { fill: #0ca30c; } .bad { fill: #d03b3b; }
+.goods { stroke: #0ca30c; } .bads { stroke: #d03b3b; }
+.cell { fill: #ffffff; stroke: #cfcec8; }
+.arrow { stroke: #7a7974; stroke-width: 2; fill: none; marker-end: url(#ah); }
+.ah { fill: #7a7974; }
+@media (prefers-color-scheme: dark) {
+  .bg { fill: #1a1a19; }
+  .card { fill: #242423; stroke: #3a3a37; }
+  .t { fill: #f0efec; }
+  .t2 { fill: #c3c2b7; }
+  .t3 { fill: #9d9c95; }
+  .edge { stroke: #8f8e88; }
+  .edge2 { stroke: #4a4a46; }
+  .grid { stroke: #2f2f2d; }
+  .axis { stroke: #55554f; }
+  .op { fill: #7c7ff5; }
+  .var { fill: #2f9e63; } .vart { fill: #ecfff3; }
+  .cst { fill: #55565f; } .cstt { fill: #f2f2f6; }
+  .fold { fill: #c99a1c; } .foldt { fill: #1d1500; }
+  .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; }
+  .s1s { stroke: #3987e5; } .s2s { stroke: #d95926; } .s3s { stroke: #199e70; }
+  .o1 { fill: #184f95; } .o2 { fill: #3987e5; } .o3 { fill: #86b6ef; }
+  .hl { fill: #d95926; stroke: #d95926; }
+  .hlb { fill: #3987e5; stroke: #3987e5; }
+  .cell { fill: #20201f; stroke: #45453f; }
+  .arrow { stroke: #9d9c95; }
+  .ah { fill: #9d9c95; }
+}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+<rect width="880" height="500" rx="14" class="bg"/>
+<text x="28.0" y="38.0" class="t" font-size="19" text-anchor="start" font-weight="700" >Benchmark de crossover de C: microsegundos por cruce</text>
+<text x="28.0" y="60.0" class="t2" font-size="13" text-anchor="start" font-weight="normal" >Copia de camino: el costo casi no crece con la profundidad.</text>
+<rect x="170.0" y="74.0" width="12.0" height="12.0" rx="2" class="s2" />
+<text x="188.0" y="84.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >C antes</text>
+<rect x="261.8" y="74.0" width="12.0" height="12.0" rx="2" class="s1" />
+<text x="279.8" y="84.0" class="t2" font-size="12.5" text-anchor="start" font-weight="normal" >C ahora</text>
+<text x="156.0" y="134.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 7</text>
+<path d="M170,104 H299.3 Q303.3,104 303.3,108 V120 Q303.3,124 299.3,124 H170 Z" class="s2" />
+<text x="311.3" y="119.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >1.88 µs</text>
+<path d="M170,130 H240.6 Q244.6,130 244.6,134 V146 Q244.6,150 240.6,150 H170 Z" class="s1" />
+<text x="252.6" y="145.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >1.05 µs</text>
+<text x="156.0" y="208.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 9</text>
+<path d="M170,178 H371.0 Q375.0,178 375.0,182 V194 Q375.0,198 371.0,198 H170 Z" class="s2" />
+<text x="383.0" y="193.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >2.88 µs</text>
+<path d="M170,204 H308.0 Q312.0,204 312.0,208 V220 Q312.0,224 308.0,224 H170 Z" class="s1" />
+<text x="320.0" y="219.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >2.00 µs</text>
+<text x="156.0" y="282.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 10</text>
+<path d="M170,252 H480.3 Q484.3,252 484.3,256 V268 Q484.3,272 480.3,272 H170 Z" class="s2" />
+<text x="492.3" y="267.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >4.42 µs</text>
+<path d="M170,278 H327.2 Q331.2,278 331.2,282 V294 Q331.2,298 327.2,298 H170 Z" class="s1" />
+<text x="339.2" y="293.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >2.27 µs</text>
+<text x="156.0" y="356.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 12</text>
+<path d="M170,326 H521.3 Q525.3,326 525.3,330 V342 Q525.3,346 521.3,346 H170 Z" class="s2" />
+<text x="533.3" y="341.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >5.00 µs</text>
+<path d="M170,352 H379.7 Q383.7,352 383.7,356 V368 Q383.7,372 379.7,372 H170 Z" class="s1" />
+<text x="391.7" y="367.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >3.01 µs</text>
+<text x="156.0" y="430.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 15</text>
+<path d="M170,400 H726.0 Q730.0,400 730.0,404 V416 Q730.0,420 726.0,420 H170 Z" class="s2" />
+<text x="738.0" y="415.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >7.88 µs</text>
+<path d="M170,426 H669.7 Q673.7,426 673.7,430 V442 Q673.7,446 669.7,446 H170 Z" class="s1" />
+<text x="681.7" y="441.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >7.09 µs</text>
+<line x1="170.0" y1="96.0" x2="170.0" y2="452.0" class="axis" />
+</svg>

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="430" viewBox="0 0 880 430" role="img" aria-label="Corte temprano exacto">
+<title>Corte temprano exacto</title>
+<style>
+text { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
+.bg { fill: #fcfcfb; }
+.card { fill: #f4f3ef; stroke: #e2e1dc; }
+.t { fill: #0b0b0b; }
+.t2 { fill: #52514e; }
+.t3 { fill: #7a7974; }
+.edge { stroke: #9b9a94; stroke-width: 2; fill: none; }
+.edge2 { stroke: #c9c8c2; stroke-width: 2; fill: none; }
+.grid { stroke: #e6e5e0; stroke-width: 1; }
+.axis { stroke: #b9b8b2; stroke-width: 1; }
+.op { fill: #6366f1; } .opt { fill: #ffffff; }
+.var { fill: #3fb874; } .vart { fill: #08321b; }
+.cst { fill: #d3d4de; } .cstt { fill: #23242a; }
+.fold { fill: #f6c445; } .foldt { fill: #3a2a00; }
+.s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; }
+.s1s { stroke: #2a78d6; } .s2s { stroke: #eb6834; } .s3s { stroke: #1baf7a; }
+.o1 { fill: #86b6ef; } .o2 { fill: #2a78d6; } .o3 { fill: #184f95; }
+.ring { fill: none; stroke-width: 3; }
+.dash { fill: none; stroke-width: 2; stroke-dasharray: 6 5; }
+.hl { fill: #eb6834; fill-opacity: 0.10; stroke: #eb6834; stroke-width: 2; stroke-dasharray: 6 5; }
+.hlb { fill: #2a78d6; fill-opacity: 0.08; stroke: #2a78d6; stroke-width: 2; stroke-dasharray: 6 5; }
+.good { fill: #0ca30c; } .bad { fill: #d03b3b; }
+.goods { stroke: #0ca30c; } .bads { stroke: #d03b3b; }
+.cell { fill: #ffffff; stroke: #cfcec8; }
+.arrow { stroke: #7a7974; stroke-width: 2; fill: none; marker-end: url(#ah); }
+.ah { fill: #7a7974; }
+@media (prefers-color-scheme: dark) {
+  .bg { fill: #1a1a19; }
+  .card { fill: #242423; stroke: #3a3a37; }
+  .t { fill: #f0efec; }
+  .t2 { fill: #c3c2b7; }
+  .t3 { fill: #9d9c95; }
+  .edge { stroke: #8f8e88; }
+  .edge2 { stroke: #4a4a46; }
+  .grid { stroke: #2f2f2d; }
+  .axis { stroke: #55554f; }
+  .op { fill: #7c7ff5; }
+  .var { fill: #2f9e63; } .vart { fill: #ecfff3; }
+  .cst { fill: #55565f; } .cstt { fill: #f2f2f6; }
+  .fold { fill: #c99a1c; } .foldt { fill: #1d1500; }
+  .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; }
+  .s1s { stroke: #3987e5; } .s2s { stroke: #d95926; } .s3s { stroke: #199e70; }
+  .o1 { fill: #184f95; } .o2 { fill: #3987e5; } .o3 { fill: #86b6ef; }
+  .hl { fill: #d95926; stroke: #d95926; }
+  .hlb { fill: #3987e5; stroke: #3987e5; }
+  .cell { fill: #20201f; stroke: #45453f; }
+  .arrow { stroke: #9d9c95; }
+  .ah { fill: #9d9c95; }
+}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+<rect width="880" height="430" rx="14" class="bg"/>
+<text x="28.0" y="38.0" class="t" font-size="19" text-anchor="start" font-weight="700" >Corte temprano exacto: dejar de evaluar a quien ya perdió</text>
+<text x="28.0" y="60.0" class="t2" font-size="13" text-anchor="start" font-weight="normal" >MSE parcial (suma de errores hasta la fila / n) de tres hijos. Curvas ilustrativas.</text>
+<line x1="90.0" y1="320.0" x2="690.0" y2="320.0" class="axis" />
+<line x1="90.0" y1="320.0" x2="690.0" y2="320.0" class="grid" />
+<text x="82.0" y="324.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >0.0</text>
+<line x1="90.0" y1="265.0" x2="690.0" y2="265.0" class="grid" />
+<text x="82.0" y="269.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >0.2</text>
+<line x1="90.0" y1="210.0" x2="690.0" y2="210.0" class="grid" />
+<text x="82.0" y="214.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >0.4</text>
+<line x1="90.0" y1="155.0" x2="690.0" y2="155.0" class="grid" />
+<text x="82.0" y="159.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >0.6</text>
+<line x1="90.0" y1="100.0" x2="690.0" y2="100.0" class="grid" />
+<text x="82.0" y="104.0" class="t3" font-size="11" text-anchor="end" font-weight="normal" >0.8</text>
+<text x="90.0" y="338.0" class="t3" font-size="11" text-anchor="middle" font-weight="normal" >1</text>
+<text x="202.5" y="338.0" class="t3" font-size="11" text-anchor="middle" font-weight="normal" >10</text>
+<text x="327.5" y="338.0" class="t3" font-size="11" text-anchor="middle" font-weight="normal" >20</text>
+<text x="452.5" y="338.0" class="t3" font-size="11" text-anchor="middle" font-weight="normal" >30</text>
+<text x="577.5" y="338.0" class="t3" font-size="11" text-anchor="middle" font-weight="normal" >40</text>
+<text x="690.0" y="338.0" class="t3" font-size="11" text-anchor="middle" font-weight="normal" >49</text>
+<text x="390.0" y="356.0" class="t2" font-size="12" text-anchor="middle" font-weight="normal" >fila del dataset</text>
+<line x1="90.0" y1="204.5" x2="690.0" y2="204.5" class="edge" stroke-dasharray="7 5"/>
+<text x="698.0" y="208.5" class="t" font-size="12" text-anchor="start" font-weight="600" >umbral T</text>
+<path d="M90.0,318.6 L102.5,316.5 L115.0,314.3 L127.5,312.8 L140.0,312.0 L152.5,311.4 L165.0,310.3 L177.5,308.3 L190.0,306.1 L202.5,304.3 L215.0,303.4 L227.5,302.8 L240.0,301.9 L252.5,300.1 L265.0,297.9 L277.5,295.9 L290.0,294.8 L302.5,294.2 L315.0,293.4 L327.5,291.9 L340.0,289.7 L352.5,287.6 L365.0,286.2 L377.5,285.5 L390.0,284.9 L402.5,283.6 L415.0,281.5 L427.5,279.3 L440.0,277.7 L452.5,276.8 L465.0,276.3 L477.5,275.2 L490.0,273.3 L502.5,271.1 L515.0,269.2 L527.5,268.2 L540.0,267.6 L552.5,266.8 L565.0,265.1 L577.5,262.9 L590.0,260.9 L602.5,259.6 L615.0,259.0 L627.5,258.3 L640.0,256.9 L652.5,254.7 L665.0,252.6 L677.5,251.1 L690.0,250.3" class="s1s" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="690.0" cy="250.3" r="5" class="good"/>
+<text x="682.0" y="238.3" class="t" font-size="12" text-anchor="end" font-weight="normal" >hijo A: sobrevive (MSE exacto)</text>
+<path d="M90.0,316.1 L102.5,310.5 L115.0,307.0 L127.5,304.6 L140.0,299.8 L152.5,294.6 L165.0,291.8 L177.5,288.9 L190.0,283.6 L202.5,279.0 L215.0,276.7 L227.5,273.0 L240.0,267.4 L252.5,263.6 L265.0,261.3 L277.5,256.8 L290.0,251.4 L302.5,248.4 L315.0,245.7 L327.5,240.5 L340.0,235.7 L352.5,233.3 L365.0,229.9 L377.5,224.3 L390.0,220.3 L402.5,218.0 L415.0,213.7 L427.5,208.2 L440.0,205.1 L452.5,202.5" class="s2s" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="452.5" cy="202.5" r="5" class="bad"/>
+<text x="462.5" y="190.5" class="t" font-size="12" text-anchor="start" font-weight="normal" >hijo B: se corta en la fila 30</text>
+<path d="M90.0,280.7 L102.5,247.0 L115.0,196.5" class="s3s" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="115.0" cy="196.5" r="5" class="bad"/>
+<text x="125.0" y="186.5" class="t" font-size="12" text-anchor="start" font-weight="normal" >hijo C: se corta en la fila 3</text>
+<text x="90.0" y="392.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >T = el (N/2)-ésimo mejor MSE entre los hijos ya evaluados; solo puede bajar. La suma solo crece, así que</text>
+<text x="90.0" y="409.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >quien rebasa T terminaría peor que N/2 hijos y nunca sobreviviría: se deja de evaluar y recibe +∞.</text>
+</svg>

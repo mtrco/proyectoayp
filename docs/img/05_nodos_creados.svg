@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="300" viewBox="0 0 880 300" role="img" aria-label="Nodos creados por crossover según la profundidad">
+<title>Nodos creados por crossover según la profundidad</title>
+<style>
+text { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
+.bg { fill: #fcfcfb; }
+.card { fill: #f4f3ef; stroke: #e2e1dc; }
+.t { fill: #0b0b0b; }
+.t2 { fill: #52514e; }
+.t3 { fill: #7a7974; }
+.edge { stroke: #9b9a94; stroke-width: 2; fill: none; }
+.edge2 { stroke: #c9c8c2; stroke-width: 2; fill: none; }
+.grid { stroke: #e6e5e0; stroke-width: 1; }
+.axis { stroke: #b9b8b2; stroke-width: 1; }
+.op { fill: #6366f1; } .opt { fill: #ffffff; }
+.var { fill: #3fb874; } .vart { fill: #08321b; }
+.cst { fill: #d3d4de; } .cstt { fill: #23242a; }
+.fold { fill: #f6c445; } .foldt { fill: #3a2a00; }
+.s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; }
+.s1s { stroke: #2a78d6; } .s2s { stroke: #eb6834; } .s3s { stroke: #1baf7a; }
+.o1 { fill: #86b6ef; } .o2 { fill: #2a78d6; } .o3 { fill: #184f95; }
+.ring { fill: none; stroke-width: 3; }
+.dash { fill: none; stroke-width: 2; stroke-dasharray: 6 5; }
+.hl { fill: #eb6834; fill-opacity: 0.10; stroke: #eb6834; stroke-width: 2; stroke-dasharray: 6 5; }
+.hlb { fill: #2a78d6; fill-opacity: 0.08; stroke: #2a78d6; stroke-width: 2; stroke-dasharray: 6 5; }
+.good { fill: #0ca30c; } .bad { fill: #d03b3b; }
+.goods { stroke: #0ca30c; } .bads { stroke: #d03b3b; }
+.cell { fill: #ffffff; stroke: #cfcec8; }
+.arrow { stroke: #7a7974; stroke-width: 2; fill: none; marker-end: url(#ah); }
+.ah { fill: #7a7974; }
+@media (prefers-color-scheme: dark) {
+  .bg { fill: #1a1a19; }
+  .card { fill: #242423; stroke: #3a3a37; }
+  .t { fill: #f0efec; }
+  .t2 { fill: #c3c2b7; }
+  .t3 { fill: #9d9c95; }
+  .edge { stroke: #8f8e88; }
+  .edge2 { stroke: #4a4a46; }
+  .grid { stroke: #2f2f2d; }
+  .axis { stroke: #55554f; }
+  .op { fill: #7c7ff5; }
+  .var { fill: #2f9e63; } .vart { fill: #ecfff3; }
+  .cst { fill: #55565f; } .cstt { fill: #f2f2f6; }
+  .fold { fill: #c99a1c; } .foldt { fill: #1d1500; }
+  .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; }
+  .s1s { stroke: #3987e5; } .s2s { stroke: #d95926; } .s3s { stroke: #199e70; }
+  .o1 { fill: #184f95; } .o2 { fill: #3987e5; } .o3 { fill: #86b6ef; }
+  .hl { fill: #d95926; stroke: #d95926; }
+  .hlb { fill: #3987e5; stroke: #3987e5; }
+  .cell { fill: #20201f; stroke: #45453f; }
+  .arrow { stroke: #9d9c95; }
+  .ah { fill: #9d9c95; }
+}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+<rect width="880" height="300" rx="14" class="bg"/>
+<text x="28.0" y="38.0" class="t" font-size="19" text-anchor="start" font-weight="700" >¿Cuántos nodos crea un crossover?</text>
+<text x="28.0" y="60.0" class="t2" font-size="13" text-anchor="start" font-weight="normal" >Árboles completos (grow_full), 2 hijos por cruce.</text>
+<text x="156.0" y="115.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 7</text>
+<rect x="170.0" y="100.0" width="304.1" height="10.0" rx="3" class="s2" />
+<rect x="170.0" y="113.0" width="143.2" height="10.0" rx="3" class="s1" />
+<text x="482.1" y="109.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >272 copiados (A, B)</text>
+<text x="321.2" y="122.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >≤ 14 nuevos (C)</text>
+<text x="156.0" y="151.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 9</text>
+<rect x="170.0" y="136.0" width="368.6" height="10.0" rx="3" class="s2" />
+<rect x="170.0" y="149.0" width="156.8" height="10.0" rx="3" class="s1" />
+<text x="546.6" y="145.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >892 copiados (A, B)</text>
+<text x="334.8" y="158.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >≤ 18 nuevos (C)</text>
+<text x="156.0" y="187.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 10</text>
+<rect x="170.0" y="172.0" width="400.3" height="10.0" rx="3" class="s2" />
+<rect x="170.0" y="185.0" width="162.5" height="10.0" rx="3" class="s1" />
+<text x="578.3" y="181.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >1,600 copiados (A, B)</text>
+<text x="340.5" y="194.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >≤ 20 nuevos (C)</text>
+<text x="156.0" y="223.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 12</text>
+<rect x="170.0" y="208.0" width="464.2" height="10.0" rx="3" class="s2" />
+<rect x="170.0" y="221.0" width="172.4" height="10.0" rx="3" class="s1" />
+<text x="642.2" y="217.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >5,200 copiados (A, B)</text>
+<text x="350.4" y="230.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >≤ 24 nuevos (C)</text>
+<text x="156.0" y="259.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >profundidad 15</text>
+<rect x="170.0" y="244.0" width="560.0" height="10.0" rx="3" class="s2" />
+<rect x="170.0" y="257.0" width="184.5" height="10.0" rx="3" class="s1" />
+<text x="738.0" y="253.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >30,400 copiados (A, B)</text>
+<text x="362.5" y="266.0" class="t2" font-size="11" text-anchor="start" font-weight="normal" >≤ 30 nuevos (C)</text>
+<text x="170.0" y="292.0" class="t3" font-size="12" text-anchor="start" font-weight="normal" >Escala logarítmica. En profundidad 15, C crea ~1,000 veces menos nodos que A o B.</text>
+</svg>

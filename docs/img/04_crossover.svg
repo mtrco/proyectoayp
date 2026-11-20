@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="610" viewBox="0 0 880 610" role="img" aria-label="Crossover convencional contra copia de camino">
+<title>Crossover convencional contra copia de camino</title>
+<style>
+text { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
+.bg { fill: #fcfcfb; }
+.card { fill: #f4f3ef; stroke: #e2e1dc; }
+.t { fill: #0b0b0b; }
+.t2 { fill: #52514e; }
+.t3 { fill: #7a7974; }
+.edge { stroke: #9b9a94; stroke-width: 2; fill: none; }
+.edge2 { stroke: #c9c8c2; stroke-width: 2; fill: none; }
+.grid { stroke: #e6e5e0; stroke-width: 1; }
+.axis { stroke: #b9b8b2; stroke-width: 1; }
+.op { fill: #6366f1; } .opt { fill: #ffffff; }
+.var { fill: #3fb874; } .vart { fill: #08321b; }
+.cst { fill: #d3d4de; } .cstt { fill: #23242a; }
+.fold { fill: #f6c445; } .foldt { fill: #3a2a00; }
+.s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; }
+.s1s { stroke: #2a78d6; } .s2s { stroke: #eb6834; } .s3s { stroke: #1baf7a; }
+.o1 { fill: #86b6ef; } .o2 { fill: #2a78d6; } .o3 { fill: #184f95; }
+.ring { fill: none; stroke-width: 3; }
+.dash { fill: none; stroke-width: 2; stroke-dasharray: 6 5; }
+.hl { fill: #eb6834; fill-opacity: 0.10; stroke: #eb6834; stroke-width: 2; stroke-dasharray: 6 5; }
+.hlb { fill: #2a78d6; fill-opacity: 0.08; stroke: #2a78d6; stroke-width: 2; stroke-dasharray: 6 5; }
+.good { fill: #0ca30c; } .bad { fill: #d03b3b; }
+.goods { stroke: #0ca30c; } .bads { stroke: #d03b3b; }
+.cell { fill: #ffffff; stroke: #cfcec8; }
+.arrow { stroke: #7a7974; stroke-width: 2; fill: none; marker-end: url(#ah); }
+.ah { fill: #7a7974; }
+@media (prefers-color-scheme: dark) {
+  .bg { fill: #1a1a19; }
+  .card { fill: #242423; stroke: #3a3a37; }
+  .t { fill: #f0efec; }
+  .t2 { fill: #c3c2b7; }
+  .t3 { fill: #9d9c95; }
+  .edge { stroke: #8f8e88; }
+  .edge2 { stroke: #4a4a46; }
+  .grid { stroke: #2f2f2d; }
+  .axis { stroke: #55554f; }
+  .op { fill: #7c7ff5; }
+  .var { fill: #2f9e63; } .vart { fill: #ecfff3; }
+  .cst { fill: #55565f; } .cstt { fill: #f2f2f6; }
+  .fold { fill: #c99a1c; } .foldt { fill: #1d1500; }
+  .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; }
+  .s1s { stroke: #3987e5; } .s2s { stroke: #d95926; } .s3s { stroke: #199e70; }
+  .o1 { fill: #184f95; } .o2 { fill: #3987e5; } .o3 { fill: #86b6ef; }
+  .hl { fill: #d95926; stroke: #d95926; }
+  .hlb { fill: #3987e5; stroke: #3987e5; }
+  .cell { fill: #20201f; stroke: #45453f; }
+  .arrow { stroke: #9d9c95; }
+  .ah { fill: #9d9c95; }
+}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+<rect width="880" height="610" rx="14" class="bg"/>
+<text x="28.0" y="38.0" class="t" font-size="19" text-anchor="start" font-weight="700" >Crossover: copiar todo (A y B) o compartir (C)</text>
+<text x="28.0" y="60.0" class="t2" font-size="13" text-anchor="start" font-weight="normal" >Se intercambia el subárbol marcado de cada padre. Los padres nunca cambian.</text>
+<rect x="20.0" y="82.0" width="410.0" height="510.0" rx="10" class="card" />
+<text x="40.0" y="110.0" class="t" font-size="14" text-anchor="start" font-weight="700" >Convencional: clonar y luego intercambiar</text>
+<rect x="100.0" y="192.0" width="92.0" height="104.0" rx="24" class="hl" />
+<line x1="113.0" y1="160.0" x2="80.0" y2="216.0" class="edge" />
+<line x1="113.0" y1="160.0" x2="146.0" y2="216.0" class="edge" />
+<line x1="146.0" y1="216.0" x2="124.0" y2="272.0" class="edge" />
+<line x1="146.0" y1="216.0" x2="168.0" y2="272.0" class="edge" />
+<circle cx="113.0" cy="160.0" r="16" class="op"/>
+<text x="113.0" y="165.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >+</text>
+<circle cx="80.0" cy="216.0" r="16" class="var"/>
+<text x="80.0" y="220.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x1</text>
+<circle cx="146.0" cy="216.0" r="16" class="op"/>
+<text x="146.0" y="221.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >×</text>
+<circle cx="124.0" cy="272.0" r="16" class="var"/>
+<text x="124.0" y="276.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x2</text>
+<circle cx="168.0" cy="272.0" r="16" class="cst"/>
+<text x="168.0" y="276.7" class="cstt" font-size="13" text-anchor="middle" font-weight="500" >0.4</text>
+<rect x="246.0" y="192.0" width="48.0" height="104.0" rx="24" class="hlb" />
+<line x1="292.0" y1="160.0" x2="270.0" y2="216.0" class="edge" />
+<line x1="292.0" y1="160.0" x2="314.0" y2="216.0" class="edge" />
+<line x1="270.0" y1="216.0" x2="270.0" y2="272.0" class="edge" />
+<circle cx="292.0" cy="160.0" r="16" class="op"/>
+<text x="292.0" y="165.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >−</text>
+<circle cx="270.0" cy="216.0" r="16" class="op"/>
+<text x="270.0" y="221.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >√</text>
+<circle cx="270.0" cy="272.0" r="16" class="var"/>
+<text x="270.0" y="276.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x3</text>
+<circle cx="314.0" cy="216.0" r="16" class="var"/>
+<text x="314.0" y="220.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x4</text>
+<text x="124.0" y="318.0" class="t3" font-size="12" text-anchor="middle" font-weight="normal" >padre A</text>
+<text x="292.0" y="318.0" class="t3" font-size="12" text-anchor="middle" font-weight="normal" >padre B</text>
+<line x1="210.0" y1="330.0" x2="210.0" y2="356.0" class="arrow" />
+<line x1="102.0" y1="390.0" x2="80.0" y2="440.0" class="edge" />
+<line x1="102.0" y1="390.0" x2="124.0" y2="440.0" class="edge" />
+<line x1="124.0" y1="440.0" x2="124.0" y2="490.0" class="edge" />
+<circle cx="102.0" cy="390.0" r="15" class="op"/>
+<circle cx="102.0" cy="390.0" r="19" class="ring s2s"/>
+<text x="102.0" y="395.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >+</text>
+<circle cx="80.0" cy="440.0" r="15" class="var"/>
+<circle cx="80.0" cy="440.0" r="19" class="ring s2s"/>
+<text x="80.0" y="444.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x1</text>
+<circle cx="124.0" cy="440.0" r="15" class="op"/>
+<circle cx="124.0" cy="440.0" r="19" class="ring s2s"/>
+<text x="124.0" y="445.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >√</text>
+<circle cx="124.0" cy="490.0" r="15" class="var"/>
+<circle cx="124.0" cy="490.0" r="19" class="ring s2s"/>
+<text x="124.0" y="494.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x3</text>
+<line x1="325.0" y1="390.0" x2="292.0" y2="440.0" class="edge" />
+<line x1="325.0" y1="390.0" x2="358.0" y2="440.0" class="edge" />
+<line x1="292.0" y1="440.0" x2="270.0" y2="490.0" class="edge" />
+<line x1="292.0" y1="440.0" x2="314.0" y2="490.0" class="edge" />
+<circle cx="325.0" cy="390.0" r="15" class="op"/>
+<circle cx="325.0" cy="390.0" r="19" class="ring s2s"/>
+<text x="325.0" y="395.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >−</text>
+<circle cx="292.0" cy="440.0" r="15" class="op"/>
+<circle cx="292.0" cy="440.0" r="19" class="ring s2s"/>
+<text x="292.0" y="445.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >×</text>
+<circle cx="270.0" cy="490.0" r="15" class="var"/>
+<circle cx="270.0" cy="490.0" r="19" class="ring s2s"/>
+<text x="270.0" y="494.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x2</text>
+<circle cx="314.0" cy="490.0" r="15" class="cst"/>
+<circle cx="314.0" cy="490.0" r="19" class="ring s2s"/>
+<text x="314.0" y="494.7" class="cstt" font-size="13" text-anchor="middle" font-weight="500" >0.4</text>
+<circle cx="358.0" cy="440.0" r="15" class="var"/>
+<circle cx="358.0" cy="440.0" r="19" class="ring s2s"/>
+<text x="358.0" y="444.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x4</text>
+<text x="124.0" y="532.0" class="t3" font-size="12" text-anchor="middle" font-weight="normal" >hijo 1</text>
+<text x="292.0" y="532.0" class="t3" font-size="12" text-anchor="middle" font-weight="normal" >hijo 2</text>
+<text x="40.0" y="560.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >Todos los nodos de los hijos son nuevos (anillo naranja):</text>
+<text x="40.0" y="577.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >clonar cuesta tanto como el tamaño de los padres.</text>
+<rect x="450.0" y="82.0" width="410.0" height="510.0" rx="10" class="card" />
+<text x="470.0" y="110.0" class="t" font-size="14" text-anchor="start" font-weight="700" >C: copia de camino (se comparten nodos)</text>
+<rect x="522.0" y="204.0" width="94.0" height="106.0" rx="24" class="hl" />
+<line x1="534.5" y1="170.0" x2="500.0" y2="228.0" class="edge" />
+<line x1="534.5" y1="170.0" x2="569.0" y2="228.0" class="edge" />
+<line x1="569.0" y1="228.0" x2="546.0" y2="286.0" class="edge" />
+<line x1="569.0" y1="228.0" x2="592.0" y2="286.0" class="edge" />
+<circle cx="534.5" cy="170.0" r="16" class="op"/>
+<text x="534.5" y="175.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >+</text>
+<circle cx="500.0" cy="228.0" r="16" class="var"/>
+<text x="500.0" y="232.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x1</text>
+<circle cx="569.0" cy="228.0" r="16" class="op"/>
+<text x="569.0" y="233.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >×</text>
+<circle cx="546.0" cy="286.0" r="16" class="var"/>
+<text x="546.0" y="290.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x2</text>
+<circle cx="592.0" cy="286.0" r="16" class="cst"/>
+<text x="592.0" y="290.7" class="cstt" font-size="13" text-anchor="middle" font-weight="500" >0.4</text>
+<rect x="676.0" y="204.0" width="48.0" height="106.0" rx="24" class="hlb" />
+<line x1="723.0" y1="170.0" x2="700.0" y2="228.0" class="edge" />
+<line x1="723.0" y1="170.0" x2="746.0" y2="228.0" class="edge" />
+<line x1="700.0" y1="228.0" x2="700.0" y2="286.0" class="edge" />
+<circle cx="723.0" cy="170.0" r="16" class="op"/>
+<text x="723.0" y="175.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >−</text>
+<circle cx="700.0" cy="228.0" r="16" class="op"/>
+<text x="700.0" y="233.8" class="opt" font-size="16" text-anchor="middle" font-weight="600" >√</text>
+<circle cx="700.0" cy="286.0" r="16" class="var"/>
+<text x="700.0" y="290.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x3</text>
+<circle cx="746.0" cy="228.0" r="16" class="var"/>
+<text x="746.0" y="232.7" class="vart" font-size="13" text-anchor="middle" font-weight="600" >x4</text>
+<text x="546.0" y="330.0" class="t3" font-size="12" text-anchor="middle" font-weight="normal" >padre A</text>
+<text x="722.0" y="330.0" class="t3" font-size="12" text-anchor="middle" font-weight="normal" >padre B</text>
+<circle cx="620" cy="430" r="17" class="op"/>
+<circle cx="620" cy="430" r="21" class="ring s2s"/>
+<text x="620.0" y="436.0" class="opt" font-size="16" text-anchor="middle" font-weight="600" >+</text>
+<path d="M610.0,416.0 Q542.6,339.3 506.0,244.0" class="arrow" />
+<path d="M632.0,417.0 Q680.9,336.5 692.0,243.0" class="arrow" />
+<text x="620.0" y="474.0" class="t2" font-size="12" text-anchor="middle" font-weight="normal" >hijo 1 = 1 nodo nuevo</text>
+<text x="470.0" y="560.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >El hijo reutiliza x1 de A y √x3 de B tal cual: solo se crean</text>
+<text x="470.0" y="577.0" class="t2" font-size="12" text-anchor="start" font-weight="normal" >los nodos del camino de la raíz al corte (≤ 1 por nivel).</text>
+</svg>

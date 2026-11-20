@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="466" viewBox="0 0 880 466" role="img" aria-label="B antes, profundidad 12: ¿en qué se iba el tiempo?">
+<title>B antes, profundidad 12: ¿en qué se iba el tiempo?</title>
+<style>
+text { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
+.bg { fill: #fcfcfb; }
+.card { fill: #f4f3ef; stroke: #e2e1dc; }
+.t { fill: #0b0b0b; }
+.t2 { fill: #52514e; }
+.t3 { fill: #7a7974; }
+.edge { stroke: #9b9a94; stroke-width: 2; fill: none; }
+.edge2 { stroke: #c9c8c2; stroke-width: 2; fill: none; }
+.grid { stroke: #e6e5e0; stroke-width: 1; }
+.axis { stroke: #b9b8b2; stroke-width: 1; }
+.op { fill: #6366f1; } .opt { fill: #ffffff; }
+.var { fill: #3fb874; } .vart { fill: #08321b; }
+.cst { fill: #d3d4de; } .cstt { fill: #23242a; }
+.fold { fill: #f6c445; } .foldt { fill: #3a2a00; }
+.s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; }
+.s1s { stroke: #2a78d6; } .s2s { stroke: #eb6834; } .s3s { stroke: #1baf7a; }
+.o1 { fill: #86b6ef; } .o2 { fill: #2a78d6; } .o3 { fill: #184f95; }
+.ring { fill: none; stroke-width: 3; }
+.dash { fill: none; stroke-width: 2; stroke-dasharray: 6 5; }
+.hl { fill: #eb6834; fill-opacity: 0.10; stroke: #eb6834; stroke-width: 2; stroke-dasharray: 6 5; }
+.hlb { fill: #2a78d6; fill-opacity: 0.08; stroke: #2a78d6; stroke-width: 2; stroke-dasharray: 6 5; }
+.good { fill: #0ca30c; } .bad { fill: #d03b3b; }
+.goods { stroke: #0ca30c; } .bads { stroke: #d03b3b; }
+.cell { fill: #ffffff; stroke: #cfcec8; }
+.arrow { stroke: #7a7974; stroke-width: 2; fill: none; marker-end: url(#ah); }
+.ah { fill: #7a7974; }
+@media (prefers-color-scheme: dark) {
+  .bg { fill: #1a1a19; }
+  .card { fill: #242423; stroke: #3a3a37; }
+  .t { fill: #f0efec; }
+  .t2 { fill: #c3c2b7; }
+  .t3 { fill: #9d9c95; }
+  .edge { stroke: #8f8e88; }
+  .edge2 { stroke: #4a4a46; }
+  .grid { stroke: #2f2f2d; }
+  .axis { stroke: #55554f; }
+  .op { fill: #7c7ff5; }
+  .var { fill: #2f9e63; } .vart { fill: #ecfff3; }
+  .cst { fill: #55565f; } .cstt { fill: #f2f2f6; }
+  .fold { fill: #c99a1c; } .foldt { fill: #1d1500; }
+  .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; }
+  .s1s { stroke: #3987e5; } .s2s { stroke: #d95926; } .s3s { stroke: #199e70; }
+  .o1 { fill: #184f95; } .o2 { fill: #3987e5; } .o3 { fill: #86b6ef; }
+  .hl { fill: #d95926; stroke: #d95926; }
+  .hlb { fill: #3987e5; stroke: #3987e5; }
+  .cell { fill: #20201f; stroke: #45453f; }
+  .arrow { stroke: #9d9c95; }
+  .ah { fill: #9d9c95; }
+}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+<rect width="880" height="466" rx="14" class="bg"/>
+<text x="28.0" y="38.0" class="t" font-size="19" text-anchor="start" font-weight="700" >B antes, profundidad 12: ¿en qué se iba el tiempo?</text>
+<text x="28.0" y="60.0" class="t2" font-size="13" text-anchor="start" font-weight="normal" >Porcentaje del tiempo del GP completo (g++, semilla 1).</text>
+<text x="216.0" y="122.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >evaluar hijos</text>
+<path d="M230,104 H726.0 Q730.0,104 730.0,108 V120 Q730.0,124 726.0,124 H230 Z" class="s1" />
+<text x="738.0" y="119.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >69 %</text>
+<text x="216.0" y="170.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >evaluar población inicial</text>
+<path d="M230,152 H311.0 Q315.0,152 315.0,156 V168 Q315.0,172 311.0,172 H230 Z" class="s1" />
+<text x="323.0" y="167.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >12 %</text>
+<text x="216.0" y="218.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >destruir árboles descartados</text>
+<path d="M230,200 H263.5 Q267.5,200 267.5,204 V216 Q267.5,220 263.5,220 H230 Z" class="s1" />
+<text x="275.5" y="215.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >5 %</text>
+<text x="216.0" y="266.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >clonar (mutación)</text>
+<path d="M230,248 H255.5 Q259.5,248 259.5,252 V264 Q259.5,268 255.5,268 H230 Z" class="s1" />
+<text x="267.5" y="263.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >4 %</text>
+<text x="216.0" y="314.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >clonar (crossover)</text>
+<path d="M230,296 H252.7 Q256.7,296 256.7,300 V312 Q256.7,316 252.7,316 H230 Z" class="s1" />
+<text x="264.7" y="311.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >4 %</text>
+<text x="216.0" y="362.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >generar población</text>
+<path d="M230,344 H237.5 Q241.5,344 241.5,348 V360 Q241.5,364 237.5,364 H230 Z" class="s1" />
+<text x="249.5" y="359.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >2 %</text>
+<text x="216.0" y="410.0" class="t2" font-size="12.5" text-anchor="end" font-weight="normal" >resto</text>
+<path d="M230,392 H256.3 Q260.3,392 260.3,396 V408 Q260.3,412 256.3,412 H230 Z" class="s1" />
+<text x="268.3" y="407.0" class="t" font-size="12" text-anchor="start" font-weight="normal" >4 %</text>
+<line x1="230.0" y1="96.0" x2="230.0" y2="418.0" class="axis" />
+</svg>
