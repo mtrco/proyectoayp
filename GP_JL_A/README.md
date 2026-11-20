@@ -76,8 +76,8 @@ julia main.jl --demo
 ## Uso
 
 ```powershell
-julia --startup-file=no -O3 --threads=1 --gcthreads=1 main.jl --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
-julia --startup-file=no -O3 --threads=1 --gcthreads=1 main.jl --bench-gp --data=data\DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
+julia --startup-file=no -O3 main.jl --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
+julia --startup-file=no -O3 main.jl --bench-gp --data=data\DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
 julia main.jl --eval-file --file=arboles.txt --data=data\ejemplo.csv
 julia main.jl --export-trees --count=100 --depth=6 --variables=2 --seed=1 [--full]
 ```

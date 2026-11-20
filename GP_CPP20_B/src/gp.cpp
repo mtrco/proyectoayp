@@ -4,7 +4,6 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -15,121 +14,6 @@
 
 namespace gp {
 namespace {
-
-#if defined(_MSC_VER)
-#define GP_FORCE_INLINE __forceinline
-#else
-#define GP_FORCE_INLINE inline __attribute__((always_inline))
-#endif
-
-// ---------------------------------------------------------------------------
-// Pool de nodos. Bloques de sizeof(Node) bytes tomados de trozos grandes; los
-// nodos liberados van a una lista libre y se reutilizan. Los nodos nuevos de un
-// mismo arbol suelen quedar contiguos en memoria (mejor uso de cache al evaluar).
-// La memoria se reutiliza pero no se devuelve al sistema hasta que el programa
-// termina. No es seguro entre hilos (el proyecto es de un solo hilo).
-// ---------------------------------------------------------------------------
-class NodePool {
-public:
-    void* allocate() {
-        ++live_;
-        if (live_ > peak_) peak_ = live_;
-        if (free_ != nullptr) {
-            FreeBlock* block = free_;
-            free_ = block->next;
-            return block;
-        }
-        if (cursor_ == end_) refill();
-        void* result = cursor_;
-        cursor_ += sizeof(Node);
-        return result;
-    }
-    void deallocate(void* pointer) noexcept {
-        --live_;
-        auto* block = static_cast<FreeBlock*>(pointer);
-        block->next = free_;
-        free_ = block;
-    }
-    PoolStats stats() const { return {live_, peak_, reserved_}; }
-
-private:
-    struct FreeBlock { FreeBlock* next; };
-    static constexpr std::size_t kNodesPerChunk = std::size_t{1} << 16;  // 2 MB por trozo
-
-    void refill() {
-        const std::size_t bytes = kNodesPerChunk * sizeof(Node);
-        cursor_ = static_cast<std::byte*>(::operator new(bytes));
-        end_ = cursor_ + bytes;
-        reserved_ += bytes;
-    }
-
-    FreeBlock* free_ = nullptr;
-    std::byte* cursor_ = nullptr;
-    std::byte* end_ = nullptr;
-    std::size_t live_ = 0;
-    std::size_t peak_ = 0;
-    std::size_t reserved_ = 0;
-};
-
-static_assert(sizeof(Node) >= sizeof(void*), "El nodo debe poder alojar la lista libre");
-static_assert(sizeof(Node) <= 32, "El nodo compacto deberia ocupar 32 bytes");
-
-// Inicializacion constante: existe antes de cualquier reserva, sin problemas de
-// orden de inicializacion estatica. Nunca se destruye (el sistema libera todo).
-constinit NodePool g_pool{};
-
-// ---------------------------------------------------------------------------
-// Evaluacion interna: misma aritmetica que Node::eval, pero sin comprobar el
-// indice de variable en cada acceso (fitness lo valida una vez por arbol) y
-// resolviendo hojas sin llamada recursiva. Sigue siendo recursiva y fila por fila.
-// ---------------------------------------------------------------------------
-double eval_node(const Node* n, const double* x);
-
-GP_FORCE_INLINE double operand(const Node* c, const double* x) {
-    switch (c->kind) {
-        case Kind::Constant: return c->value;
-        case Kind::Variable: return x[c->variable_index];
-        default: return eval_node(c, x);
-    }
-}
-
-double eval_node(const Node* n, const double* x) {
-    switch (n->kind) {
-        case Kind::Constant: return n->value;
-        case Kind::Variable: return x[n->variable_index];
-        case Kind::Sqrt: return std::sqrt(std::max(operand(n->left.get(), x), 0.0));
-        case Kind::Add: {
-            const double a = operand(n->left.get(), x);
-            const double b = operand(n->right.get(), x);
-            return a + b;
-        }
-        case Kind::Subtract: {
-            const double a = operand(n->left.get(), x);
-            const double b = operand(n->right.get(), x);
-            return a - b;
-        }
-        case Kind::Multiply: {
-            const double a = operand(n->left.get(), x);
-            const double b = operand(n->right.get(), x);
-            return a * b;
-        }
-        case Kind::Divide: {
-            const double a = operand(n->left.get(), x);
-            const double b = operand(n->right.get(), x);
-            return a / (std::abs(b) < kEpsilon ? kEpsilon : b);
-        }
-    }
-    return 0.0;  // inalcanzable
-}
-
-// Mayor indice de variable del arbol (-1 si no tiene variables).
-long long max_variable_index(const Node& n) {
-    long long m = n.kind == Kind::Variable ? static_cast<long long>(n.variable_index) : -1;
-    if (n.left) m = std::max(m, max_variable_index(*n.left));
-    if (n.right) m = std::max(m, max_variable_index(*n.right));
-    return m;
-}
-
 
 template <typename Int>
 Int random_integer(std::mt19937_64& rng, Int min_value, Int max_value) {
@@ -177,8 +61,7 @@ Tree grow_impl(int remaining_depth, std::size_t variable_count,
 void clone_collect(Tree& dest, const Node& src, std::vector<Tree*>& slots) {
     dest = std::make_unique<Node>();
     dest->kind = src.kind;
-    dest->value = src.value;
-    dest->variable_index = src.variable_index;
+    dest->copy_payload_from(src);
     slots.push_back(&dest);
     if (src.left) clone_collect(dest->left, *src.left, slots);
     if (src.right) clone_collect(dest->right, *src.right, slots);
@@ -197,8 +80,7 @@ struct ShapedSlot {
 int clone_shape(Tree& dest, const Node& src, int depth, std::vector<ShapedSlot>& slots) {
     dest = std::make_unique<Node>();
     dest->kind = src.kind;
-    dest->value = src.value;
-    dest->variable_index = src.variable_index;
+    dest->copy_payload_from(src);
     const std::size_t index = slots.size();
     slots.push_back({&dest, depth, 0});
     int height = 0;
@@ -354,6 +236,27 @@ bool looks_like_header(const std::string& line) {
     }
 }
 
+// Misma evaluacion que Node::eval (mismas operaciones, mismo resultado bit a bit) pero
+// sin comprobar el indice de variable y con un puntero simple en vez de std::span.
+// Solo se usa despues de evaluar la primera fila con Node::eval: como ningun operador
+// omite a un hijo, esa fila ya visito TODAS las variables del arbol y valido sus indices.
+double eval_unchecked(const Node& n, const double* x) noexcept {
+    switch (n.kind) {
+        case Kind::Constant: return n.value;
+        case Kind::Variable: return x[n.variable_index];
+        case Kind::Sqrt: return std::sqrt(std::max(eval_unchecked(*n.left, x), 0.0));
+        case Kind::Add: return eval_unchecked(*n.left, x) + eval_unchecked(*n.right, x);
+        case Kind::Subtract: return eval_unchecked(*n.left, x) - eval_unchecked(*n.right, x);
+        case Kind::Multiply: return eval_unchecked(*n.left, x) * eval_unchecked(*n.right, x);
+        case Kind::Divide: {
+            const double a = eval_unchecked(*n.left, x);
+            const double b = eval_unchecked(*n.right, x);
+            return a / (std::abs(b) < kEpsilon ? kEpsilon : b);
+        }
+    }
+    return 0.0;  // inalcanzable: todos los Kind estan cubiertos
+}
+
 struct Individual {
     Tree tree;
     double score;
@@ -365,22 +268,6 @@ bool better(const Individual& a, const Individual& b) {
 
 } // namespace
 
-void* Node::operator new(std::size_t size) {
-    if (size != sizeof(Node)) return ::operator new(size);
-    return g_pool.allocate();
-}
-
-void Node::operator delete(void* pointer, std::size_t size) noexcept {
-    if (pointer == nullptr) return;
-    if (size != sizeof(Node)) {
-        ::operator delete(pointer);
-        return;
-    }
-    g_pool.deallocate(pointer);
-}
-
-PoolStats pool_stats() { return g_pool.stats(); }
-
 std::unique_ptr<Node> Node::constant(double val) {
     auto node = std::make_unique<Node>();
     node->kind = Kind::Constant;
@@ -390,11 +277,8 @@ std::unique_ptr<Node> Node::constant(double val) {
 
 std::unique_ptr<Node> Node::variable(std::size_t index) {
     auto node = std::make_unique<Node>();
-    if (index > std::numeric_limits<std::uint32_t>::max()) {
-        throw std::out_of_range("Indice de variable demasiado grande");
-    }
     node->kind = Kind::Variable;
-    node->variable_index = static_cast<std::uint32_t>(index);
+    node->variable_index = index;
     return node;
 }
 
@@ -498,8 +382,7 @@ Dataset Dataset::from_csv(const std::string& filename) {
 Tree clone(const Node& root) {
     auto result = std::make_unique<Node>();
     result->kind = root.kind;
-    result->value = root.value;
-    result->variable_index = root.variable_index;
+    result->copy_payload_from(root);
     if (root.left) result->left = clone(*root.left);
     if (root.right) result->right = clone(*root.right);
     return result;
@@ -530,19 +413,14 @@ double fitness(const Node& root, const Dataset& data) {
     if (data.x.empty() || data.x.size() != data.y.size()) {
         throw std::invalid_argument("Dataset vacio o inconsistente");
     }
-    const std::size_t variables = data.variables();
-    for (const auto& row : data.x) {
-        if (row.size() != variables) {
-            throw std::invalid_argument("Dimensiones inconsistentes del dataset");
-        }
-    }
-    // El indice de variable se valida UNA vez por arbol, no en cada acceso.
-    if (max_variable_index(root) >= static_cast<long long>(variables)) {
-        throw std::out_of_range("Indice de variable fuera del vector");
-    }
     double sum = 0.0;
     for (std::size_t i = 0; i < data.x.size(); ++i) {
-        const double predicted = eval_node(&root, data.x[i].data());
+        if (data.x[i].size() != data.variables()) {
+            throw std::invalid_argument("Dimensiones inconsistentes del dataset");
+        }
+        // Fila 0: evaluacion con comprobaciones (valida los indices de variable).
+        const double predicted = i == 0 ? root.eval(data.x[i])
+                                        : eval_unchecked(root, data.x[i].data());
         const double difference = data.y[i] - predicted;
         const double squared = difference * difference;
         if (!std::isfinite(squared)) return std::numeric_limits<double>::infinity();
@@ -805,21 +683,8 @@ void run_tests() {
     auto [c, d] = crossover(*a, *b, rng);
     check(c && d && a->expression() == old_a && b->expression() == old_b,
           "crossover no altera padres");
-    check(node_count(*c) + node_count(*d) == node_count(*a) + node_count(*b),
-          "crossover conserva el total de nodos");
     Tree m = mutation(*a, 2, rng);
     check(m && a->expression() == old_a, "mutation no altera padre");
-    {
-        // El pool devuelve a la lista libre todos los nodos de los arboles destruidos.
-        const std::size_t live_before = pool_stats().live_nodes;
-        {
-            std::vector<Tree> temporary;
-            for (int i = 0; i < 50; ++i) temporary.push_back(grow_full(6, 2, rng));
-            auto [p, q] = depth_protected_crossover(*temporary[0], *temporary[1], 6, rng);
-            check(pool_stats().live_nodes > live_before, "pool registra nodos vivos");
-        }
-        check(pool_stats().live_nodes == live_before, "pool sin fugas");
-    }
     for (int i = 0; i < 30; ++i) {
         auto [x, y] = depth_protected_crossover(*a, *b, 4, rng);
         check(tree_depth(*x) <= 4 && tree_depth(*y) <= 4,

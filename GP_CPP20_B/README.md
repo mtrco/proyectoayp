@@ -89,9 +89,8 @@ de los mismos arboles bit a bit entre las tres implementaciones.
 - Se cronometra SOLO `crossover`: clonacion de ambos padres + intercambio. No se cuenta
   la generacion de padres ni la destruccion de los hijos.
 - Los hijos se liberan cada 16 cruces, fuera del cronometro, para que no dupliquen la RAM.
-- **RAM necesaria en profundidad 15** (unos 15,200 nodos por arbol, 32 bytes por nodo en
-  el pool): ~4.7 GB con 10,000 arboles y ~2.4 GB con 5,000. En profundidad 12 o menos
-  basta con menos de 1 GB.
+- **RAM necesaria en profundidad 15** (unos 15,200 nodos por arbol, ~45 bytes por nodo):
+  ~7 GB con 10,000 arboles y ~3.5 GB con 5,000. En profundidad 12 o menos basta con ~1.3 GB.
   Revisa la RAM del equipo del torneo antes de elegir.
 - Sin paralelismo: todo corre en un solo hilo (regla confirmada).
 
@@ -145,49 +144,40 @@ de los mismos arboles bit a bit entre las tres implementaciones.
 | 12 | 247-258 | 230-238 | 36.9 | 35.4 |
 | 15 | 1,620 | 1,017 | - | - |
 
-## Optimizacion de memoria y evaluacion (resultados identicos)
+## Asignador propio, nodo compacto y evaluacion ligera (resultados identicos)
 
-Sigue siendo un arbol convencional: nodos enlazados por `std::unique_ptr`, evaluacion
-recursiva fila por fila y un solo hilo. Cambia como se reserva la memoria y cuanto
-trabajo hace cada evaluacion:
+B sigue siendo **convencional**: cada nodo es un objeto independiente enlazado con
+`std::unique_ptr`, y clonar copia nodo por nodo. Solo cambia la gestion de memoria y
+una comprobacion repetida:
 
-- **Pool de nodos.** `Node` define su propio `operator new`/`operator delete`: los nodos
-  salen de trozos de 2 MB y los liberados vuelven a una lista libre, sin llamar a
-  `malloc`/`free` por nodo. El pool reutiliza la memoria pero no la devuelve al sistema
-  hasta que termina el programa, y no es seguro entre hilos (el proyecto es de un solo
-  hilo). `pool_stats()` informa nodos vivos, pico y memoria reservada.
-- **Nodo de 32 bytes** en lugar de 40 (+ ~16 del `malloc`): campos reordenados e indice de
-  variable de 32 bits.
-- **Evaluacion sin comprobar el indice de variable en cada acceso.** `fitness` lo valida
-  una vez por arbol (lanza la misma excepcion que antes si un indice no existe) y las
-  hojas se resuelven sin llamada recursiva. `Node::eval` publico conserva la comprobacion.
-- **Verificado:** un programa que enlaza la version anterior y esta en un mismo
-  ejecutable da **33,219 comprobaciones y 0 fallos**: generacion, `eval` y MSE bit a bit en
-  tres datasets (uno con desbordamientos), crossover, mutacion y sus versiones
-  protegidas, estado del generador y 18 corridas completas del GP hasta profundidad 12.
-  El pool termina con 0 nodos vivos (sin fugas). Tambien pasa con AddressSanitizer.
-- **Fallback del crossover protegido:** en el GP (poblacion 5000, profundidades 7, 9 y 12)
-  el intercambio de raices por agotar los 128 intentos ocurrio **0 veces de 12,500**.
+- **Asignador propio** (`detail::NodePool`, en `operator new`/`operator delete` de
+  `Node`). Los nodos salen de bloques de 2 MB y los liberados se reutilizan con una
+  lista libre, en vez de pedir y liberar cada nodo al heap del sistema. `make_unique` y
+  `unique_ptr` lo usan sin cambiar el resto del codigo. La memoria reservada no se
+  devuelve al sistema hasta que termina el programa.
+- **Nodo de 32 bytes** (antes 40). `value` y `variable_index` comparten una union,
+  porque un nodo es constante o variable, nunca ambas cosas.
+- **Evaluacion ligera.** La primera fila se evalua con `Node::eval`, que comprueba los
+  indices de variable. Como ningun operador omite a un hijo, esa fila ya valido todas las
+  variables, asi que las demas filas usan una version sin comprobaciones y con un
+  puntero simple en lugar de `std::span`.
+- **Verificado:** `--test` pasa; `cross_check` contra C++ C da 0 fallos; y `--bench-gp`
+  da el mismo mejor MSE y la misma expresion que antes en las profundidades 7, 9 y 12.
+- **Medido** en el contenedor Linux (g++ 13.3 `-O3`, un hilo). En Windows el heap del
+  sistema es mas lento que el de Linux, asi que la ganancia del asignador deberia ser
+  mayor ahi; hay que medirla en el equipo del torneo.
 
-Medido en el mismo contenedor Linux (g++ 13.3 `-O3 -ffp-contract=off`, un hilo), con los
-10,000 padres en memoria a la vez. Variacion entre corridas: +-10% aproximadamente.
-
-| Profundidad | Crossover antes (us) | Crossover ahora (us) | GP completo antes (s) | GP completo ahora (s) |
+| Profundidad | Crossover antes (us) | Crossover ahora (us) | GP antes (s) | GP ahora (s) |
 |---|---|---|---|---|
-| 7 | 8.6 | 3.8 | 0.95-0.97 | 0.63-0.72 |
-| 9 | 28.8 | 14.2 | 3.39-3.52 | 2.52-2.62 |
-| 10 | 58.8 | 28.4 | - | - |
-| 12 | 227 | 107 | 39.4-39.8 | 22.6-23.0 |
-| 15 | 1,018 (solo 5,000 cabian en 7 GB) | 564 (los 10,000) | - | - |
+| 7 | 8.66 | 3.54 | 0.94 | 0.84 |
+| 9 | 29.5 | 13.0 | 3.65 | 2.79-3.19 |
+| 12 | 244 | 92 | 39.8 | 34.8-37.2 |
+| 15 | 1,061 * | 560 * | - | - |
 
-**RAM en profundidad 15:** antes ~0.70 MB por arbol (~7 GB con 10,000); ahora ~0.47 MB
-(**~4.7 GB con los 10,000**, medido).
+\* Con 5,000 padres a la vez.
 
-En el GP, lo que queda es sobre todo la evaluacion recursiva (dominada por divisiones,
-raices y saltos dificiles de predecir; se comprobo que casi no depende de donde esten
-los nodos en memoria) y liberar nodo por nodo los arboles descartados. Las dos cosas son
-propias de la representacion convencional; ir mas alla exigiria evaluar varias filas a
-la vez, que no esta permitido.
+- **RAM con 1,000 arboles de profundidad 15:** 716 MB antes y 479 MB ahora. Con
+  10,000 arboles serian unos 4.8 GB en lugar de unos 7 GB.
 
 ## Validacion de entradas (no afecta el tiempo medido)
 
@@ -200,11 +190,13 @@ la vez, que no esta permitido.
 ## Limitaciones / mejoras propuestas
 
 1. Esta es una version correcta de referencia funcional, **no la mas rapida posible**.
-2. El pool de nodos no es seguro entre hilos y no devuelve memoria al sistema hasta que
-   termina el programa (la reutiliza).
+2. ~~Pool/arena para los nodos~~: hecho (`detail::NodePool`).
 3. El crossover protegido prueba hasta 128 cortes y puede terminar en intercambio
-   de raices; en las corridas medidas no ocurrio ninguna vez, pero conviene volver a
-   medirlo con el dataset oficial.
+   de raices; esta estrategia es valida en profundidad, pero puede reducir diversidad.
 4. Generaciones son parametrizables; el manual no define una cifra.
 5. Validar con el docente lo que falta del protocolo (semillas, dataset, repeticiones).
 6. Probar `/O2 /GL /LTCG` y medir antes de introducir mas optimizaciones.
+7. ~~Nodo mas compacto y arena de nodos~~: hecho; en profundidad 15 con 10,000 arboles
+   la RAM baja de unos 7 GB a unos 4.8 GB.
+8. Pendientes de confirmar con el profesor: PGO de MSVC, compilar con clang-cl, plegar
+   subarboles constantes y cortar el MSE antes de terminar.

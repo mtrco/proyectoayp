@@ -52,7 +52,7 @@ $CMain = (Resolve-Path (Join-Path $C "main.jl")).Path
 $CDir = (Resolve-Path $C).Path
 $ADir = (Resolve-Path $A).Path
 if (Test-Path $Data) { $Data = (Resolve-Path $Data).Path }
-$JuliaFlags = @("--startup-file=no", "-O3")  
+$JuliaFlags = @("--startup-file=no", "-O3")
 
 $ramGB = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
 if ($ParesEnMemoria -lt 0) {

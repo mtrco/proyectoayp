@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <new>
 #include <random>
 #include <span>
 #include <string>
@@ -17,25 +19,84 @@ enum class Kind : std::uint8_t {
     Constant, Variable, Add, Subtract, Multiply, Divide, Sqrt
 };
 
+namespace detail {
+
+// Asignador propio para los nodos. Los arboles siguen siendo CONVENCIONALES (cada
+// nodo es un objeto independiente enlazado por punteros y clonar copia nodo por
+// nodo); solo cambia de donde sale la memoria. En vez de pedir y liberar cada nodo
+// al heap del sistema (lento, sobre todo en Windows), se reservan bloques grandes y
+// los nodos liberados se reutilizan (lista libre LIFO: los ultimos liberados, aun en
+// cache, son los primeros en reutilizarse). La memoria reservada no se devuelve al
+// sistema hasta que termina el programa. Un solo hilo (el torneo no permite paralelismo).
+class NodePool {
+public:
+    static constexpr std::size_t kBlockBytes = 32;
+
+    static void* allocate() {
+        if (free_list_ != nullptr) {
+            FreeBlock* block = free_list_;
+            free_list_ = block->next;
+            return block;
+        }
+        if (next_ == end_) refill();
+        void* block = next_;
+        next_ += kBlockBytes;
+        return block;
+    }
+
+    static void deallocate(void* p) noexcept {
+        auto* block = static_cast<FreeBlock*>(p);
+        block->next = free_list_;
+        free_list_ = block;
+    }
+
+private:
+    struct FreeBlock {
+        FreeBlock* next;
+    };
+    static constexpr std::size_t kBlocksPerChunk = std::size_t{1} << 16;  // 2 MB por bloque
+
+    static void refill() {
+        next_ = static_cast<std::byte*>(::operator new(kBlockBytes * kBlocksPerChunk));
+        end_ = next_ + kBlockBytes * kBlocksPerChunk;
+    }
+
+    inline static FreeBlock* free_list_ = nullptr;
+    inline static std::byte* next_ = nullptr;
+    inline static std::byte* end_ = nullptr;
+};
+
+} // namespace detail
+
 // B: arbol CONVENCIONAL con nodos independientes y punteros propietarios.
 // La raiz se encuentra a profundidad cero.
-//
-// Optimizaciones que NO cambian la representacion (siguen siendo nodos enlazados
-// por punteros, cada uno dueno de sus hijos):
-//  - Campos ordenados para que el nodo ocupe 32 bytes en vez de 40.
-//  - Los nodos se reservan de un pool propio (operator new/delete de la clase):
-//    reservar y liberar un nodo es sacar o devolver un bloque de una lista libre,
-//    sin llamar a malloc/free. El pool NO es seguro entre hilos; el proyecto es de
-//    un solo hilo (el profesor no permite paralelismo).
 struct Node {
+    Kind kind = Kind::Constant;
+    // Un nodo es constante O variable, nunca ambas: la union deja el nodo en 32 bytes
+    // (antes 40), asi que hay menos memoria que copiar al clonar y caben mas nodos en cache.
+    union {
+        double value = 0.0;          // Kind::Constant
+        std::size_t variable_index;  // Kind::Variable (0 -> x1)
+    };
     std::unique_ptr<Node> left;
     std::unique_ptr<Node> right;
-    double value = 0.0;
-    std::uint32_t variable_index = 0;
-    Kind kind = Kind::Constant;
 
-    static void* operator new(std::size_t size);
-    static void operator delete(void* pointer, std::size_t size) noexcept;
+    // new/delete de Node (los usan make_unique y unique_ptr) van al asignador propio.
+    static void* operator new(std::size_t size) {
+        return size == sizeof(Node) ? detail::NodePool::allocate() : ::operator new(size);
+    }
+    static void operator delete(void* p, std::size_t size) noexcept {
+        if (size == sizeof(Node)) {
+            detail::NodePool::deallocate(p);
+        } else {
+            ::operator delete(p);
+        }
+    }
+
+    // Copia el valor o el indice (la union completa, sin importar el tipo de nodo).
+    void copy_payload_from(const Node& other) noexcept {
+        std::memcpy(&value, &other.value, sizeof(value));
+    }
 
     static std::unique_ptr<Node> constant(double value);
     static std::unique_ptr<Node> variable(std::size_t index);
@@ -47,6 +108,9 @@ struct Node {
     // precision=8: formato habitual; precision=17: sin perdida (intercambio con A y C).
     std::string expression(int precision = 8) const;
 };
+
+static_assert(sizeof(Node) <= detail::NodePool::kBlockBytes, "Node no cabe en el bloque del asignador");
+static_assert(sizeof(double) == sizeof(std::size_t), "la union value/variable_index asume 8 bytes");
 
 using Tree = std::unique_ptr<Node>;
 
@@ -120,13 +184,5 @@ CrossoverTiming benchmark_crossover(std::size_t trees, int depth,
 
 // Pruebas deterministas de todas las piezas importantes.
 void run_tests();
-
-// Estadisticas del pool de nodos (para el reporte de memoria).
-struct PoolStats {
-    std::size_t live_nodes = 0;      // nodos vivos ahora
-    std::size_t peak_nodes = 0;      // maximo de nodos vivos a la vez
-    std::size_t reserved_bytes = 0;  // memoria pedida al sistema por el pool
-};
-PoolStats pool_stats();
 
 } // namespace gp

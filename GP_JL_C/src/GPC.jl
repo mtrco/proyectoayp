@@ -26,12 +26,6 @@ se evalua fila por fila, como en el manual.
    de usarse (lo recoge el recolector de basura de Julia). S se elige segun un
    presupuesto de memoria (cache_mb).
 
-4. Subarboles constantes precalculados. Un nodo cuyo subarbol solo tiene constantes
-   (por ejemplo sqrt(0.25) + 0.1) calcula su valor UNA vez al crearse, con los mismos
-   operadores protegidos, y la evaluacion lo devuelve sin recorrer el subarbol en cada
-   fila. Los nodos originales se conservan: expression, profundidad, tamano y puntos de
-   corte no cambian, y el MSE es identico bit a bit.
-
 Mismas reglas que A y B, y MISMO consumo del generador aleatorio que A, con el punto
 de corte elegido uniforme en preorden como en A. Con la misma semilla, C produce
 EXACTAMENTE los mismos arboles, los mismos hijos y la misma corrida del GP que A
@@ -112,10 +106,8 @@ mutable struct OpNode <: Node
     const size::Int32     # nodos del subarbol (incluido este)
     const height::Int16   # altura del subarbol (hoja = 0)
     const op::UInt8
-    const isconst::Bool   # el subarbol solo contiene constantes (ninguna variable)
     const left::Union{OpNode, VarNode, ConstNode}
     const right::Union{OpNode, VarNode, ConstNode, Nothing}  # nothing en sqrt
-    const cvalue::Float64 # valor del subarbol si isconst (calculado una vez al crearlo)
     cache::Vector{Float64}  # resultado en cada fila del dataset `cache_id`
     cache_id::Int           # id del dataset; 0 = sin cache; -id = llenandose
     function OpNode(op::UInt8, left::Node, right::Union{Node, Nothing}=nothing)
@@ -124,27 +116,11 @@ mutable struct OpNode <: Node
             throw(ArgumentError("'$(_symbol(op))' requiere $(op == OP_SQRT ? 1 : 2) hijo(s)"))
         s = 1 + nsize(left) + (right === nothing ? 0 : nsize(right))
         h = 1 + max(nheight(left), right === nothing ? 0 : nheight(right))
-        # Plegado de constantes: mismas operaciones protegidas que la evaluacion, una sola
-        # vez. El valor es bit a bit el que daria recorrer el subarbol en cualquier fila.
-        left_const, left_value = _const_info(left)
-        if right === nothing
-            isc = left_const
-            value = isc ? protected_sqrt(left_value) : 0.0
-        else
-            right_const, right_value = _const_info(right)
-            isc = left_const && right_const
-            value = isc ? apply(op, left_value, right_value) : 0.0
-        end
-        return new(Int32(s), Int16(h), op, isc, left, right, value, EMPTY_CACHE, 0)
+        return new(Int32(s), Int16(h), op, left, right, EMPTY_CACHE, 0)
     end
 end
 
 const AnyNode = Union{OpNode, VarNode, ConstNode}
-
-# (es constante, valor) de un hijo, para el plegado de constantes de OpNode.
-@inline _const_info(n::ConstNode) = (true, n.value)
-@inline _const_info(::VarNode) = (false, 0.0)
-@inline _const_info(n::OpNode) = (n.isconst, n.cvalue)
 
 @inline nsize(::Union{VarNode, ConstNode}) = 1
 @inline nsize(n::OpNode) = Int(n.size)
@@ -269,12 +245,6 @@ end
 # ---------------------------------------------------------------------------
 const DATASET_COUNTER = Ref(0)
 
-# IMPORTANTE: un Dataset NO debe modificarse despues de crearse. El cache de los nodos
-# se identifica con `id`; si se cambian valores de `rows` o `y`, los nodos con cache
-# devolverian resultados del dataset anterior. Para datos distintos, crea otro Dataset
-# (recibe un id nuevo). El constructor copia los datos, asi que modificar los vectores
-# originales del llamador no afecta al Dataset. El programa lee el CSV una vez y no lo
-# modifica. Con cache_min_size = NO_CACHE no se lee ni se escribe ningun cache.
 struct Dataset
     rows::Vector{Vector{Float64}}
     y::Vector{Float64}
@@ -359,10 +329,8 @@ function _eval(n::AnyNode, x::Vector{Float64}, i::Int, id::Int, rows::Int, S::In
         return @inbounds x[n.index]
     end
     m = n::OpNode
-    m.isconst && return m.cvalue  # subarbol sin variables: valor precalculado
     cid = m.cache_id
-    # Con NO_CACHE no se usa ningun cache, ni siquiera uno que ya existiera.
-    (cid == id && S != NO_CACHE) && return @inbounds m.cache[i]
+    cid == id && return @inbounds m.cache[i]  # cache completo para este dataset
     a = _eval(m.left, x, i, id, rows, S)
     v = m.op == OP_SQRT ? protected_sqrt(a) :
                           apply(m.op, a, _eval(m.right::AnyNode, x, i, id, rows, S))
@@ -844,38 +812,6 @@ function run_tests(; verbose::Bool=false)
         end
     end
     check(mismatches == 0, "hijos con subarboles en cache: MSE identico")
-
-    # --- Plegado de constantes ------------------------------------------------
-    folded = parse_expression("((sqrt(0.25) + 0.1) * (x1 - (1 / 0)))")
-    check(folded.left.isconst && folded.left.cvalue === 0.6 && !folded.isconst &&
-          !folded.right.isconst && folded.right.right.isconst && folded.right.right.cvalue === 1e12,
-          "plegado de constantes: valores y marcas")
-    check(expression(folded) == "((sqrt(0.25) + 0.1) * (x1 - (1 / 0)))" && node_count(folded) == 10,
-          "el plegado no cambia expression ni tamano")
-    function _check_folding(n::AnyNode)
-        n isa OpNode || return true
-        n.isconst && !(n.cvalue === eval_row(n, Float64[])) && return false
-        n.isconst == !occursin('x', expression(n)) || return false
-        return _check_folding(n.left) && (n.right === nothing || _check_folding(n.right::AnyNode))
-    end
-    folding_ok = true
-    for t in 1:300
-        tree = grow_random(1 + t % 10, t % 4, rng)  # 0 variables = arbol solo de constantes
-        folding_ok &= _check_folding(tree)
-    end
-    check(folding_ok, "cada subarbol constante vale lo mismo, bit a bit, que recorrerlo")
-    big = parse_expression("((1e300 * 1e300) - (1e300 * 1e300))")  # Inf - Inf = NaN
-    check(big.isconst && isnan(big.cvalue) && fitness(big, exact) == Inf,
-          "constante no finita: MSE = +Inf como sin plegado")
-
-    # --- NO_CACHE ignora caches previos ----------------------------------------
-    mutable_data = Dataset([[1.0, 2.0], [3.0, -1.0], [0.5, 0.25]], [1.0, 2.0, 3.0])
-    cached_tree = parse_expression("((x1 + x2) * (x1 - (x2 / 0.5)))")
-    fitness(cached_tree, mutable_data, 1)  # llena el cache de sus nodos
-    mutable_data.rows[2][1] = 7.0         # prohibido en uso normal: solo para la prueba
-    check(fitness(cached_tree, mutable_data, NO_CACHE) ===
-          _reference_mse(cached_tree, mutable_data.rows, mutable_data.y),
-          "NO_CACHE no usa caches de evaluaciones anteriores")
 
     # --- Crossover y mutacion: copia de camino --------------------------------
     a, b = grow_full(4, 2, rng), grow_full(3, 2, rng)
