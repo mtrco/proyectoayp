@@ -1,0 +1,85 @@
+﻿{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "description": "Se destina a Windows con el entorno de desarrollo de Visual Studio.",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "x64-debug",
+      "displayName": "x64 Debug",
+      "description": "Se destina a Windows (64 bits) con el entorno de desarrollo de Visual Studio. (Debug)",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "x64-release",
+      "displayName": "x64 Release",
+      "description": "Se destina a Windows (64 bits) con el entorno de desarrollo de Visual Studio. (RelWithDebInfo)",
+      "inherits": "x64-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "x64-avx2-release",
+      "displayName": "x64 Release AVX2",
+      "description": "Como x64 Release (MSVC), con instrucciones AVX2 (/arch:AVX2).",
+      "inherits": "x64-release",
+      "cacheVariables": { "GP_AVX2": "ON" }
+    },
+    {
+      "name": "x64-clang-release",
+      "displayName": "x64 Clang Release",
+      "description": "Release compilado con clang-cl (Clang incluido en Visual Studio).",
+      "inherits": "x64-release",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl.exe",
+        "CMAKE_CXX_COMPILER": "clang-cl.exe"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-clang-x64" }
+      }
+    },
+    {
+      "name": "x64-clang-avx2-release",
+      "displayName": "x64 Clang Release AVX2",
+      "description": "Como x64 Clang Release, con instrucciones AVX2 (/arch:AVX2).",
+      "inherits": "x64-clang-release",
+      "cacheVariables": { "GP_AVX2": "ON" }
+    },
+    {
+      "name": "x86-debug",
+      "displayName": "x86 Debug",
+      "description": "Se destina a Windows (32 bits) con el entorno de desarrollo de Visual Studio. (Debug)",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "x86",
+        "strategy": "external"
+      },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "x86-release",
+      "displayName": "x86 Release",
+      "description": "Se destina a Windows (32 bits) con el entorno de desarrollo de Visual Studio. (RelWithDebInfo)",
+      "inherits": "x86-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ]
+}

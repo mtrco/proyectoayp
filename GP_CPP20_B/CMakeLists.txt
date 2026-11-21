@@ -5,15 +5,32 @@ add_executable(gp_b src/main.cpp src/gp.cpp)
 target_include_directories(gp_b PRIVATE include)
 target_compile_features(gp_b PRIVATE cxx_std_20)
 
-if(MSVC)
+option(GP_AVX2 "Compilar con instrucciones AVX2 (/arch:AVX2 o -mavx2)" OFF)
+
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # clang-cl (Clang de Visual Studio): misma biblioteca estandar que MSVC, mismas corridas.
+    # -ffp-contract=off: sin fusionar multiplicacion y suma (FMA), para que el MSE siga
+    # siendo identico bit a bit al de A y C.
+    target_compile_options(gp_b PRIVATE /W4 /clang:-ffp-contract=off $<$<CONFIG:Release>:/clang:-O3>)
+    if(GP_AVX2)
+        target_compile_options(gp_b PRIVATE /arch:AVX2)
+    endif()
+elseif(MSVC)
     target_compile_options(gp_b PRIVATE /W4 /permissive-)
     # Release: /O2 ya viene habitualmente habilitado por CMake/MSVC.
     target_compile_options(gp_b PRIVATE $<$<CONFIG:Release>:/O2> $<$<CONFIG:Release>:/GL>)
     target_link_options(gp_b PRIVATE $<$<CONFIG:Release>:/LTCG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+    if(GP_AVX2)
+        target_compile_options(gp_b PRIVATE /arch:AVX2)
+    endif()
 else()
     target_compile_options(gp_b PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(gp_b PRIVATE $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-flto>)
     target_link_options(gp_b PRIVATE $<$<CONFIG:Release>:-flto>)
+    target_compile_options(gp_b PRIVATE -ffp-contract=off)
+    if(GP_AVX2)
+        target_compile_options(gp_b PRIVATE -mavx2)
+    endif()
 endif()
 
 enable_testing()

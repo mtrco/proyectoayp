@@ -754,6 +754,7 @@ Base.@kwdef struct GPOptions
     cache_min_size::Int = 0      # 0 = automatico segun cache_mb; NO_CACHE = sin cache
     fold_constants::Bool = true  # plegado de constantes (--no-fold lo apaga)
     early_cut::Bool = true       # corte temprano exacto (--no-cut lo apaga)
+    order_by_parent::Bool = true # evaluar primero los hijos de mejores padres (--no-order lo apaga)
 end
 
 struct GPResult
@@ -875,10 +876,15 @@ function full_gp(data::Dataset, options::GPOptions)
 
     history = Float64[]
     pool = Vector{Int32}(undef, N)
+    pool_score = Vector{Float64}(undef, N)  # MSE de cada ganador del torneo
     offspring = Individual[]
     sizehint!(offspring, N)
     heap = Float64[]
     sizehint!(heap, half)
+    children = Vector{Int32}(undef, N)        # hijos en orden de creacion
+    parent_score = Vector{Float64}(undef, N)  # MSE del padre del que hereda la raiz
+    child_score = Vector{Float64}(undef, N)
+    evaluation_order = Vector{Int}(undef, N)
     for generation in 0:options.generations
         push!(history, minimum(_score, population))
         generation == options.generations && break
@@ -886,21 +892,46 @@ function full_gp(data::Dataset, options::GPOptions)
         for i in 1:N  # torneo binario repetido
             a = population[rand(rng, 1:N)]
             b = population[rand(rng, 1:N)]
-            pool[i] = a.score <= b.score ? a.tree : b.tree
+            winner = a.score <= b.score ? a : b
+            pool[i] = winner.tree
+            pool_score[i] = winner.score
         end
 
+        # Primero se CREAN todos los hijos (mismo orden y mismo consumo del generador que
+        # antes) y despues se evaluan empezando por los de mejores padres: el umbral del
+        # corte temprano baja antes y se corta mas. El orden de evaluacion no cambia el MSE
+        # de ningun sobreviviente ni el orden de creacion (que decide los empates).
         empty!(offspring)
         empty!(heap)
+        k = 0
         for _ in 1:(N ÷ 4)  # N/2 hijos por crossover
-            p1 = pool[rand(rng, 1:N)]
-            p2 = pool[rand(rng, 1:N)]
-            c1, c2 = depth_protected_crossover(Tree(g, p1), Tree(g, p2), max_depth, rng)
-            push!(offspring, Individual(_score_child!(heap, c1, data, S, half, options.early_cut), c1.i))
-            push!(offspring, Individual(_score_child!(heap, c2, data, S, half, options.early_cut), c2.i))
+            j1 = rand(rng, 1:N)
+            j2 = rand(rng, 1:N)
+            c1, c2 = depth_protected_crossover(Tree(g, pool[j1]), Tree(g, pool[j2]), max_depth, rng)
+            k += 1
+            children[k] = c1.i
+            parent_score[k] = pool_score[j1]  # c1 conserva la raiz de p1
+            k += 1
+            children[k] = c2.i
+            parent_score[k] = pool_score[j2]
         end
         for _ in 1:(N ÷ 2)  # N/2 hijos por mutacion
-            m = depth_protected_mutation(Tree(g, pool[rand(rng, 1:N)]), nvars, max_depth, rng)
-            push!(offspring, Individual(_score_child!(heap, m, data, S, half, options.early_cut), m.i))
+            j = rand(rng, 1:N)
+            m = depth_protected_mutation(Tree(g, pool[j]), nvars, max_depth, rng)
+            k += 1
+            children[k] = m.i
+            parent_score[k] = pool_score[j]
+        end
+        if options.order_by_parent
+            sortperm!(evaluation_order, parent_score; alg=MergeSort)  # estable
+        else
+            evaluation_order .= 1:N  # orden de creacion
+        end
+        for i in evaluation_order
+            child_score[i] = _score_child!(heap, Tree(g, children[i]), data, S, half, options.early_cut)
+        end
+        for i in 1:N
+            push!(offspring, Individual(child_score[i], children[i]))
         end
 
         # Reemplazo 50/50 (orden estable: mismos empates que A).
@@ -1261,6 +1292,9 @@ function run_tests(; verbose::Bool=false)
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
                                                     seed=seed, fold_constants=false, early_cut=false))),
               "el plegado y el corte temprano no alteran el GP")
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, order_by_parent=false))),
+              "evaluar primero los hijos de mejores padres no altera el GP")
         # cache_mb=1 con S=1 fuerza la compactacion del grafo en cada generacion.
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
                                                     seed=seed, cache_mb=1, cache_min_size=1))),

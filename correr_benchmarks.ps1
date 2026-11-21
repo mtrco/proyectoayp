@@ -6,7 +6,7 @@
 #   powershell -ExecutionPolicy Bypass -File .\correr_benchmarks.ps1
 #
 # Opciones (todas tienen valor por defecto):
-#   -Data "ruta\dataset.csv"   dataset del benchmark del GP completo
+#   -Data "ruta\dataset.csv"   dataset del GP completo (por defecto datos\dataset3a.csv, el oficial)
 #   -Seeds 1,2,3,4,5           semillas (una corrida por semilla)
 #   -Generations 10            el manual NO lo fija: acordarlo con el profesor
 #   -Variables 2               variables para generar arboles en el benchmark de crossover
@@ -29,7 +29,7 @@ param(
     [string]$A = "GP_JL_A",
     [string]$C = "GP_JL_C",
     [string]$Julia = "julia",
-    [string]$Data = "GP_JL_C\data\ejemplo.csv",
+    [string]$Data = "datos\dataset3a.csv",   # dataset oficial de la competencia
     [int[]]$Seeds = @(1, 2, 3, 4, 5),
     [int]$Generations = 10,
     [int]$Variables = 2,

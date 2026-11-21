@@ -102,6 +102,16 @@ ese hijo terminaria peor que N/2 hijos y nunca sobreviviria: se deja de evaluar 
 +infinito. Los sobrevivientes conservan su MSE exacto; con el orden estable del
 reemplazo, el GP es identico al de A (que no usa corte).
 
+### 7. Orden de evaluacion de los hijos (`--no-order` lo apaga)
+
+Igual que en B: primero se **crean** todos los hijos (mismo orden y mismo consumo del
+generador) y despues se **evaluan empezando por los de mejores padres** (el padre del que el
+hijo hereda la raiz; orden estable). El umbral del corte temprano baja antes y se cortan mas
+hijos. No cambia ningun MSE de los sobrevivientes ni el orden de creacion, que decide los
+empates: el GP es identico (lo comprueba `--test` y `tools/cross_check.jl` contra A).
+En B, con `dataset3a.csv`, ahorro entre 5% y 6.6% del tiempo del GP completo; en C falta
+medirlo (`julia main.jl --bench-gp ... --no-order` da la version anterior).
+
 ### Resultado medido (mismo resultado, menos tiempo)
 
 Contenedor Linux, Julia 1.13.4 `-O3`, un hilo, `data/ejemplo.csv`, mediana de 3 semillas;

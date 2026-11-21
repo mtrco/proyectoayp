@@ -18,7 +18,7 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
                                   [--seed=42] [--batch-pairs=0]
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000] [--depths=7,9,12]
                            [--generations=10] [--seed=42] [--cache-mb=1024] [--cache-min-size=0]
-                           [--no-fold] [--no-cut]
+                           [--no-fold] [--no-cut] [--no-order]
   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
   julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=42] [--full]
@@ -29,7 +29,8 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
 --cache-min-size: tamano minimo de subarbol que guarda cache (0 = automatico segun --cache-mb).
 --no-fold:        no plegar los subarboles sin variables.
 --no-cut:         sin corte temprano exacto de los hijos que no pueden sobrevivir.
-                  Ambas optimizaciones dan el mismo resultado; se apagan si el profesor no las acepta.
+--no-order:       evaluar los hijos en orden de creacion (por defecto, primero los de mejores padres).
+                  Las tres optimizaciones dan el mismo resultado; se apagan si el profesor no las acepta.
 """
 
 const INT_OPTIONS = Set(["trees", "population", "generations", "variables", "seed",
@@ -43,7 +44,7 @@ function parse_args(args)
         "trees" => 10000, "population" => 5000, "generations" => 10, "variables" => 2,
         "seed" => 42, "batch-pairs" => 0, "count" => 100, "depth" => 5,
         "cache-mb" => 1024, "cache-min-size" => 0, "full" => false, "verbose" => false,
-        "fold" => true, "cut" => true)
+        "fold" => true, "cut" => true, "order" => true)
     for arg in args[2:end]
         if arg == "--full"
             o["full"] = true
@@ -51,6 +52,8 @@ function parse_args(args)
             o["fold"] = false
         elseif arg == "--no-cut"
             o["cut"] = false
+        elseif arg == "--no-order"
+            o["order"] = false
         elseif arg == "-v"
             o["verbose"] = true
         elseif startswith(arg, "--") && occursin('=', arg)
@@ -85,7 +88,7 @@ function main(args)
         data = read_csv(o["data"])
         result = full_gp(data, GPOptions(population_size=40, max_depth=4, generations=5,
                                          seed=o["seed"], fold_constants=o["fold"],
-                                         early_cut=o["cut"]))
+                                         early_cut=o["cut"], order_by_parent=o["order"]))
         @printf("MSE final: %.6g\n", result.best_fitness)
         println("Expresion: ", expression(result.best))
         println("Mejor MSE por generacion:")
@@ -111,7 +114,8 @@ function main(args)
             options = GPOptions(population_size=o["population"], max_depth=depth,
                                 generations=o["generations"], seed=o["seed"],
                                 cache_mb=o["cache-mb"], cache_min_size=o["cache-min-size"],
-                                fold_constants=o["fold"], early_cut=o["cut"])
+                                fold_constants=o["fold"], early_cut=o["cut"],
+                                order_by_parent=o["order"])
             GC.gc()  # memoria de la corrida anterior, fuera del cronometro
             t0 = time_ns()
             result = full_gp(data, options)

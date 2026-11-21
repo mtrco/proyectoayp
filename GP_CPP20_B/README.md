@@ -242,6 +242,39 @@ Windows"; en CMake, toolset `ClangCL`). clang-cl usa la biblioteca estandar de M
 las distribuciones aleatorias, y por lo tanto las corridas, son las mismas que con MSVC.
 Confirmar con el profesor que se permite.
 
+## Orden de evaluacion de los hijos (resultados identicos; `--no-order` lo apaga)
+
+El corte temprano necesita un umbral: el (N/2)-esimo mejor MSE entre los hijos ya
+evaluados. Antes, los hijos se evaluaban en el orden en que se creaban, asi que el umbral
+tardaba en bajar. Ahora primero se **crean** todos los hijos (mismo orden y mismo consumo
+del generador aleatorio) y despues se **evaluan empezando por los de mejores padres** (el
+padre del que el hijo hereda la raiz; orden estable). Los buenos hijos aparecen antes, el
+umbral baja antes y se dejan de evaluar mas hijos que no pueden sobrevivir.
+
+El orden de evaluacion no cambia el MSE de ningun sobreviviente ni el orden de creacion,
+que es el que decide los empates: el GP da exactamente el mismo resultado.
+
+- **Verificado:** `--test` (el GP con y sin el orden nuevo es identico) y un programa que
+  enlaza la version anterior y esta en un mismo ejecutable: 33,219 comprobaciones bit a bit,
+  0 fallos, incluidas corridas completas del GP con `dataset3a.csv`.
+- **Medido** con el dataset oficial `dataset3a.csv` (961 filas), poblacion 5000,
+  10 generaciones, g++ 13 `-O3`, un hilo, Linux. Mismo MSE en todas las corridas.
+
+| Profundidad | Antes (s) | Ahora (s) | Mejora |
+|---|---|---|---|
+| 7 (3 semillas) | 10.68 / 10.88 / 10.92 | 10.21 / 10.97 / 9.72 | -5% |
+| 9 (3 semillas) | 35.18 / 34.41 / 31.58 | 32.28 / 33.23 / 30.08 | -5.5% |
+| 12 (2 semillas) | 250.9 / 210.8 | 239.0 / 197.0 | -4.7% / -6.6% |
+
+Filas evaluadas en profundidad 7 (semilla 2): 49.8 millones antes, 48.0 millones ahora,
+de 52.9 millones posibles. Con estos datos el corte temprano ahorra poco porque la mayoria de
+los hijos tiene un MSE parecido al umbral y lo cruza tarde.
+
+Otras variantes medidas en las mismas condiciones y descartadas (mismo MSE, mas lentas):
+sin plegado (`--no-fold`) +25%; sin corte (`--no-cut`) +5% a +8%; division solo en nodos de
+division +4% a +7% (con g++; con MSVC puede ser distinto, ver la revision); `switch` en
+lugar de la evaluacion sin saltos +4% a +12%; PGO de g++ mas lento.
+
 ## Validacion de entradas (no afecta el tiempo medido)
 
 - Los argumentos numericos de la linea de comandos deben ser enteros no negativos

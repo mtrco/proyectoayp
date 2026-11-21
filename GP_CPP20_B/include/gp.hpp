@@ -163,6 +163,9 @@ struct GPOptions {
     // Optimizaciones exactas (el resultado del GP no cambia); --no-fold y --no-cut las apagan.
     bool fold_constants = true; // plegar subarboles sin variables antes de evaluar
     bool early_cut = true;      // dejar de evaluar un hijo que ya no puede quedar en el mejor 50%
+    // Evaluar primero los hijos de mejores padres (--no-order lo apaga): el umbral del corte
+    // temprano baja antes y se corta mas. Tampoco cambia el resultado.
+    bool order_by_parent = true;
 };
 
 struct GPResult {

@@ -615,14 +615,14 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
         if (generation == options.generations) break;
 
         // Torneo binario repetido: llenar un pool de N punteros a los ganadores.
-        std::vector<const Node*> parent_pool;
+        std::vector<const Individual*> parent_pool;
         parent_pool.reserve(N);
         for (std::size_t i = 0; i < N; ++i) {
             const auto& a = population[random_integer<std::size_t>(rng, 0, N - 1)];
             const auto& b = population[random_integer<std::size_t>(rng, 0, N - 1)];
-            parent_pool.push_back((a.score <= b.score ? a.tree : b.tree).get());
+            parent_pool.push_back(a.score <= b.score ? &a : &b);
         }
-        const auto pick_parent = [&]() -> const Node& {
+        const auto pick_parent = [&]() -> const Individual& {
             return *parent_pool[random_integer<std::size_t>(rng, 0, N - 1)];
         };
 
@@ -654,23 +654,37 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
             return score;
         };
 
+        // Primero se CREAN todos los hijos (mismo orden y mismo consumo del generador que
+        // antes) y despues se evaluan empezando por los de mejores padres: el umbral del
+        // corte temprano baja antes y se corta mas. El orden de evaluacion no cambia ningun
+        // MSE de los sobrevivientes ni el orden de creacion (que decide los empates).
+        std::vector<double> parent_score;
+        parent_score.reserve(N);
         // N/4 cruces x 2 hijos = N/2 descendientes por crossover.
         for (std::size_t i = 0; i < N / 4; ++i) {
-            const Node& p1 = pick_parent(); // orden explicito de seleccion
-            const Node& p2 = pick_parent();
-            auto [a, b] = depth_protected_crossover(p1, p2, options.max_depth, rng);
-            const double fa = score_child(*a);
-            const double fb = score_child(*b);
-            offspring.push_back({std::move(a), fa});
-            offspring.push_back({std::move(b), fb});
+            const Individual& p1 = pick_parent(); // orden explicito de seleccion
+            const Individual& p2 = pick_parent();
+            auto [a, b] = depth_protected_crossover(*p1.tree, *p2.tree, options.max_depth, rng);
+            offspring.push_back({std::move(a), 0.0});
+            offspring.push_back({std::move(b), 0.0});
+            parent_score.push_back(p1.score);  // el hijo a conserva la raiz de p1
+            parent_score.push_back(p2.score);
         }
         // N/2 descendientes por mutacion = 50% del total.
         for (std::size_t i = 0; i < N / 2; ++i) {
-            Tree mutated = depth_protected_mutation(pick_parent(), data.variables(),
+            const Individual& p = pick_parent();
+            Tree mutated = depth_protected_mutation(*p.tree, data.variables(),
                                                      options.max_depth, rng);
-            const double score = score_child(*mutated);
-            offspring.push_back({std::move(mutated), score});
+            offspring.push_back({std::move(mutated), 0.0});
+            parent_score.push_back(p.score);
         }
+        std::vector<std::size_t> evaluation_order(offspring.size());
+        std::iota(evaluation_order.begin(), evaluation_order.end(), std::size_t{0});
+        if (options.order_by_parent) {  // estable: a igual MSE del padre, orden de creacion
+            std::stable_sort(evaluation_order.begin(), evaluation_order.end(),
+                             [&](std::size_t i, std::size_t j) { return parent_score[i] < parent_score[j]; });
+        }
+        for (const std::size_t i : evaluation_order) offspring[i].score = score_child(*offspring[i].tree);
 
         // Orden ESTABLE (como A y C): en empates conserva el orden de creacion. Con
         // nth_element el orden de los sobrevivientes dependia de la implementacion de la
@@ -906,7 +920,7 @@ void run_tests() {
         check(same, "grow en preorden: mismos arboles y mismo consumo del generador");
     }
 
-    // El corte temprano y el plegado no cambian el GP.
+    // El corte temprano, el plegado y el orden de evaluacion no cambian el GP.
     for (std::uint64_t seed : {1u, 2u, 3u}) {
         GPOptions o;
         o.population_size = 200;
@@ -916,8 +930,15 @@ void run_tests() {
         GPOptions plain = o;
         plain.early_cut = false;
         plain.fold_constants = false;
+        plain.order_by_parent = false;
+        GPOptions creation_order = o;
+        creation_order.order_by_parent = false;
         GPResult fast = full_gp(hard, o);
         GPResult slow = full_gp(hard, plain);
+        GPResult unordered = full_gp(hard, creation_order);
+        bool same_order = unordered.best_fitness_per_generation == fast.best_fitness_per_generation
+                          && unordered.best->expression(17) == fast.best->expression(17);
+        check(same_order, "evaluar primero los hijos de mejores padres: mismo GP");
         bool same = fast.best_fitness_per_generation.size() == slow.best_fitness_per_generation.size();
         for (std::size_t i = 0; same && i < fast.best_fitness_per_generation.size(); ++i) {
             same = same_bits(fast.best_fitness_per_generation[i], slow.best_fitness_per_generation[i]);
