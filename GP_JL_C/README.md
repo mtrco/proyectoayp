@@ -81,8 +81,23 @@ justo despues del padre. El generador se consume igual que en A.
   `ifelse` (se calculan + - * / y se toma uno) y lee las hojas sin saltos. Se le pasa el
   indice del nodo, no su registro (pasar el registro obliga a copiarlo en cada llamada).
 - **S automatico**: 16, o 32 en profundidad >= 11 (lo mas rapido medido: llenar el cache
-  de la poblacion inicial cuesta), y mas grande si el cache no cabe en `--cache-mb`.
-  `--cache-min-size=K` lo fija a mano; `--cache-mb=0` desactiva el cache.
+  de la poblacion inicial cuesta), y mas grande si la estimacion del cache pasa de 4 veces
+  `--cache-mb`. La estimacion es muy conservadora y la memoria real la acota la
+  compactacion del grafo. `--cache-min-size=K` lo fija a mano; `--cache-mb=0` desactiva
+  el cache.
+- **Medido con dataset3a** (961 filas, 5000 individuos, 10 generaciones, semilla 1, Ryzen 7
+  170): mismo `best_mse` con todos los S.
+
+  | S | Prof. 7 | Prof. 9 | Prof. 12 |
+  |---|---|---|---|
+  | 16 | 6.14 s | 12.40 s | 72.4 s |
+  | 32 | 6.80 s | 11.59 s | 39.9 s |
+  | 64 | 9.16 s | 14.16 s | 39.1 s |
+  | automatico anterior (16, 32, 256) | 6.18 s | 12.25 s | 53.6 s |
+
+  El automatico actual elige 16, 16 y 64. En profundidad 12 el pico de RAM con S = 64 fue
+  de unos 4 GB. Con `--cache-mb=4096` tardaba lo mismo pero el pico subia a 8.7 GB, porque
+  la compactacion esperaba a que el cache llegara a 8 GB.
 - **El resultado no cambia**: mismas operaciones, en el mismo orden y sumando fila por
   fila como A y B. El MSE es identico bit a bit con y sin cache.
 - El indice de variable se valida una vez por arbol (el mayor esta guardado en la raiz).
@@ -244,8 +259,7 @@ arboles en los tres datasets. Compara el MSE bit a bit, la profundidad y el nume
 
 ## Mejoras pendientes (medir cada una por separado)
 
-1. Barrer `--cache-min-size` (16, 32, 64) con el dataset oficial: el mejor S depende del
-   numero de filas.
+1. ~~Barrer `--cache-min-size` con el dataset oficial~~: hecho (ver "Medido con dataset3a").
 2. Unir subarboles identicos creados por separado (hash-consing). Medido en un modelo:
    casi no hay repetidos, porque las constantes son aleatorias; ganancia esperada baja.
 3. Repetir los benchmarks con varias semillas y reportar media y desviacion.

@@ -589,8 +589,12 @@ end
 Tamano minimo de subarbol que guarda cache. Llenar el cache de la poblacion inicial
 cuesta (todos sus nodos son nuevos), y un S chico solo ahorra en las generaciones. El
 punto mas rapido medido esta en S = 16 (profundidades chicas) o 32 (profundidad >= 11),
-y S crece si el cache no cabe en `cache_mb` megabytes (estimacion conservadora:
-poblacion + descendientes, arboles grow_full de profundidad max_depth).
+y S crece si la estimacion del cache pasa de 4 veces `cache_mb` megabytes. La estimacion
+(poblacion + descendientes, arboles grow_full de profundidad max_depth) es muy
+conservadora, y la memoria real la acota la compactacion del grafo (cuando el cache pasa
+de 2 * cache_mb). Medido con dataset3a (961 filas, 5000 individuos, profundidad 12): con
+el limite de 1 vez el presupuesto elegia S = 256 (53.6 s); con 4 veces elige S = 64
+(39.1 s, pico de unos 4 GB de RAM), mismo resultado.
 """
 function auto_cache_min_size(population::Integer, max_depth::Integer, rows::Integer,
                              cache_mb::Integer)
@@ -598,7 +602,7 @@ function auto_cache_min_size(population::Integer, max_depth::Integer, rows::Inte
     budget = cache_mb * 2.0^20
     expected_nodes = sum(1.8^k for k in 0:max_depth)
     S = max_depth >= 11 ? 32 : 16
-    while S < 2^20 && 2.0 * population * expected_nodes / S * rows * 8.0 > budget
+    while S < 2^20 && 2.0 * population * expected_nodes / S * rows * 8.0 > 4.0 * budget
         S *= 2
     end
     return S
@@ -1302,6 +1306,10 @@ function run_tests(; verbose::Bool=false)
     end
     check(auto_cache_min_size(5000, 12, 49, 1024) >= 16 &&
           auto_cache_min_size(5000, 12, 49, 0) == NO_CACHE, "tamano automatico del cache")
+    # Con el dataset oficial (961 filas) lo mas rapido medido fue S = 16, 16 y 64.
+    check(auto_cache_min_size(5000, 7, 961, 1024) == 16 &&
+          auto_cache_min_size(5000, 9, 961, 1024) == 16 &&
+          auto_cache_min_size(5000, 12, 961, 1024) == 64, "tamano automatico con 961 filas")
 
     t = benchmark_crossover(40, 4, 2; seed=1)
     check(t.crossovers == 20 && t.resident_trees == 40 && t.seconds > 0, "benchmark de crossover")
