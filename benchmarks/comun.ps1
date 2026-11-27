@@ -31,6 +31,8 @@ function Invoke-GPBenchmark {
         [int[]]$GPDepths,
         [int[]]$CrossDepths,
         [int]$Variables,
+        [int]$Population = 5000,        # poblacion del GP completo (multiplo de 4)
+        [int]$Trees = 10000,            # arboles del benchmark de crossover (par)
         [int]$ParesEnMemoria,           # -1 = segun la RAM; 0 = 10,000 a la vez; 2500 = 5,000
         [string[]]$GPExtra = @(),       # opciones extra del GP completo (por ejemplo --no-fold)
         [string[]]$Info = @(),          # lineas extra para equipo_y_parametros.txt
@@ -55,7 +57,7 @@ function Invoke-GPBenchmark {
         # C ocupa ~1.3 GB con 10,000 arboles de profundidad 15; A y B necesitan varios GB.
         if ($Impl -eq "C" -or $ramGB -ge 12) { $ParesEnMemoria = 0 } else { $ParesEnMemoria = 2500 }
     }
-    $arbolesEnMemoria = if ($ParesEnMemoria -eq 0) { 10000 } else { 2 * $ParesEnMemoria }
+    $arbolesEnMemoria = if ($ParesEnMemoria -eq 0) { $Trees } else { [math]::Min($Trees, 2 * $ParesEnMemoria) }
 
     # 1. Pruebas internas ---------------------------------------------------------
     if (-not $SinPruebas) {
@@ -79,8 +81,8 @@ function Invoke-GPBenchmark {
         "Semillas: $($Seeds -join ', ')",
         "Paralelismo: ninguno (un solo hilo)",
         "Cada profundidad corre en un proceso aparte",
-        "Crossover: 10,000 arboles grow_full, $arbolesEnMemoria en memoria a la vez, profundidades $($CrossDepths -join ', '), $Variables variables",
-        "GP completo: poblacion 5000, 100% grow_full, 50% crossover / 50% mutacion, profundidades $($GPDepths -join ', '), $Generations generaciones"
+        "Crossover: $Trees arboles grow_full, $arbolesEnMemoria en memoria a la vez, profundidades $($CrossDepths -join ', '), $Variables variables",
+        "GP completo: poblacion $Population, 100% grow_full, 50% crossover / 50% mutacion, profundidades $($GPDepths -join ', '), $Generations generaciones"
     )
     if (-not $SoloCrossover) {
         $hash = (Get-FileHash $Data -Algorithm SHA256).Hash
@@ -102,10 +104,10 @@ function Invoke-GPBenchmark {
 
     # 3. Benchmark de crossover -------------------------------------------------------
     if (-not $SoloGP) {
-        Write-Host "`n[2] Crossover: 10,000 arboles ($arbolesEnMemoria en memoria a la vez), un proceso por profundidad"
+        Write-Host "`n[2] Crossover: $Trees arboles ($arbolesEnMemoria en memoria a la vez), un proceso por profundidad"
         foreach ($s in $Seeds) {
             foreach ($d in $CrossDepths) {
-                $argList = $Pre + @("--bench-crossover", "--trees=10000", "--depths=$d",
+                $argList = $Pre + @("--bench-crossover", "--trees=$Trees", "--depths=$d",
                                     "--variables=$Variables", "--seed=$s", "--batch-pairs=$ParesEnMemoria")
                 $output = @(& $Exe @argList)
                 if ($LASTEXITCODE -ne 0) { throw "$Impl fallo en crossover, semilla $s, profundidad $d" }
@@ -116,12 +118,12 @@ function Invoke-GPBenchmark {
 
     # 4. Benchmark del GP completo ----------------------------------------------------
     if (-not $SoloCrossover) {
-        Write-Host "`n[3] GP completo: poblacion 5000, $Generations generaciones, un proceso por profundidad"
+        Write-Host "`n[3] GP completo: poblacion $Population, $Generations generaciones, un proceso por profundidad"
         $historyTmp = Join-Path $outFull "historial_tmp.csv"
         $historyFile = "$out\gp_historial_$Impl.csv"
         foreach ($s in $Seeds) {
             foreach ($d in $GPDepths) {
-                $argList = $Pre + @("--bench-gp", "--data=$Data", "--population=5000", "--depths=$d",
+                $argList = $Pre + @("--bench-gp", "--data=$Data", "--population=$Population", "--depths=$d",
                                     "--generations=$Generations", "--seed=$s",
                                     "--history=$historyTmp") + $GPExtra
                 $output = @(& $Exe @argList)

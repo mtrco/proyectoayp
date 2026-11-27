@@ -14,6 +14,11 @@
 #
 # Opciones (todas tienen valor por defecto):
 #   -Seeds 5                 semillas (por defecto 5; por ejemplo -Seeds 1,5)
+#   -Population 5000         poblacion del GP completo (multiplo de 4)
+#   -Trees 10000             arboles del benchmark de crossover (par)
+#   -GPDepths 7,9,12         profundidades del GP completo
+#   -CrossDepths 7,9,10,12,15  profundidades del benchmark de crossover
+#   -ExtraGP "--opcion"      opciones extra para el GP completo (por ejemplo "--no-dup")
 #   -Generations 100         generaciones del GP completo
 #   -SoloCrossover / -SoloGP correr solo una parte
 #   -ParesEnMemoria -1       -1 = segun la RAM; 0 = 10,000 a la vez; 2500 = 5,000 a la vez
@@ -29,7 +34,10 @@ param(
     [int[]]$GPDepths = @(7, 9, 12),
     [int[]]$CrossDepths = @(7, 9, 10, 12, 15),
     [int]$Variables = 2,
+    [int]$Population = 5000,
+    [int]$Trees = 10000,
     [int]$ParesEnMemoria = -1,
+    [string[]]$ExtraGP = @(),
     [switch]$SoloCrossover,
     [switch]$SoloGP
 )
@@ -48,5 +56,6 @@ $info = @(
 
 Invoke-GPBenchmark -Impl "A" -Exe $Julia -Pre ($flags + (Resolve-Path $main).Path) -Data $Data `
     -Seeds $Seeds -Generations $Generations -GPDepths $GPDepths -CrossDepths $CrossDepths `
-    -Variables $Variables -ParesEnMemoria $ParesEnMemoria -Info $info `
+    -Variables $Variables -Population $Population -Trees $Trees -ParesEnMemoria $ParesEnMemoria `
+    -GPExtra $ExtraGP -Info $info `
     -SoloCrossover:$SoloCrossover -SoloGP:$SoloGP
