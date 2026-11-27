@@ -12,11 +12,14 @@
 #include <utility>
 #include <vector>
 
+using namespace std; 
+//unico cambio, para no tener std::cout y diversas cosas
+
 namespace gp {
 
 constexpr double kEpsilon = 1e-12;
 
-enum class Kind : std::uint8_t {
+enum class Kind :  uint8_t {
     Constant, Variable, Add, Subtract, Multiply, Divide, Sqrt
 };
 
@@ -31,7 +34,7 @@ namespace detail {
 // sistema hasta que termina el programa. Un solo hilo (el torneo no permite paralelismo).
 class NodePool {
 public:
-    static constexpr std::size_t kBlockBytes = 32;
+    static constexpr  size_t kBlockBytes = 32;
 
     static void* allocate() {
         if (free_list_ != nullptr) {
@@ -55,16 +58,16 @@ private:
     struct FreeBlock {
         FreeBlock* next;
     };
-    static constexpr std::size_t kBlocksPerChunk = std::size_t{1} << 16;  // 2 MB por bloque
+    static constexpr  size_t kBlocksPerChunk =  size_t{1} << 16;  // 2 MB por bloque
 
     static void refill() {
-        next_ = static_cast<std::byte*>(::operator new(kBlockBytes * kBlocksPerChunk));
+        next_ = static_cast< byte*>(::operator new(kBlockBytes * kBlocksPerChunk));
         end_ = next_ + kBlockBytes * kBlocksPerChunk;
     }
 
     inline static FreeBlock* free_list_ = nullptr;
-    inline static std::byte* next_ = nullptr;
-    inline static std::byte* end_ = nullptr;
+    inline static  byte* next_ = nullptr;
+    inline static  byte* end_ = nullptr;
 };
 
 } // namespace detail
@@ -83,16 +86,16 @@ struct Node {
     // Los nodos internos no usan la union salvo para guardar su valor plegado.
     union {
         double value = 0.0;          // Kind::Constant (o valor plegado de un nodo interno)
-        std::size_t variable_index;  // Kind::Variable (0 -> x1)
+         size_t variable_index;  // Kind::Variable (0 -> x1)
     };
-    std::unique_ptr<Node> left;
-    std::unique_ptr<Node> right;
+     unique_ptr<Node> left;
+     unique_ptr<Node> right;
 
     // new/delete de Node (los usan make_unique y unique_ptr) van al asignador propio.
-    static void* operator new(std::size_t size) {
+    static void* operator new( size_t size) {
         return size == sizeof(Node) ? detail::NodePool::allocate() : ::operator new(size);
     }
-    static void operator delete(void* p, std::size_t size) noexcept {
+    static void operator delete(void* p,  size_t size) noexcept {
         if (size == sizeof(Node)) {
             detail::NodePool::deallocate(p);
         } else {
@@ -103,64 +106,64 @@ struct Node {
     // Copia el valor o el indice (la union completa, sin importar el tipo de nodo).
     void copy_payload_from(const Node& other) noexcept {
         direct = other.direct;
-        std::memcpy(&value, &other.value, sizeof(value));
+         memcpy(&value, &other.value, sizeof(value));
     }
 
-    static std::unique_ptr<Node> constant(double value);
-    static std::unique_ptr<Node> variable(std::size_t index);
-    static std::unique_ptr<Node> unary(Kind kind, std::unique_ptr<Node> child);
-    static std::unique_ptr<Node> binary(Kind kind, std::unique_ptr<Node> a,
-                                        std::unique_ptr<Node> b);
+    static  unique_ptr<Node> constant(double value);
+    static  unique_ptr<Node> variable( size_t index);
+    static  unique_ptr<Node> unary(Kind kind,  unique_ptr<Node> child);
+    static  unique_ptr<Node> binary(Kind kind,  unique_ptr<Node> a,
+                                         unique_ptr<Node> b);
 
-    double eval(std::span<const double> variables) const;
+    double eval( span<const double> variables) const;
     // precision=8: formato habitual; precision=17: sin perdida (intercambio con A y C).
-    std::string expression(int precision = 8) const;
+     string expression(int precision = 8) const;
 };
 
 static_assert(sizeof(Node) <= detail::NodePool::kBlockBytes, "Node no cabe en el bloque del asignador");
-static_assert(sizeof(double) == sizeof(std::size_t), "la union value/variable_index asume 8 bytes");
+static_assert(sizeof(double) == sizeof( size_t), "la union value/variable_index asume 8 bytes");
 
-using Tree = std::unique_ptr<Node>;
+using Tree =  unique_ptr<Node>;
 
 struct Dataset {
-    std::vector<std::vector<double>> x;
-    std::vector<double> y;
-    std::size_t variables() const;
-    static Dataset from_csv(const std::string& filename);
+     vector< vector<double>> x;
+     vector<double> y;
+     size_t variables() const;
+    static Dataset from_csv(const  string& filename);
 };
 
 // Lee el formato de expression(): "((x1 + -0.25) * sqrt(x2))".
-Tree parse_expression(const std::string& text);
+Tree parse_expression(const  string& text);
 
 Tree clone(const Node& root);
-std::size_t node_count(const Node& root);
+ size_t node_count(const Node& root);
 int tree_depth(const Node& root); // Una hoja sola tiene profundidad 0.
 
-Tree grow_random(int max_depth, std::size_t variable_count,
-                 std::mt19937_64& rng);
-Tree grow_full(int exact_depth, std::size_t variable_count,
-               std::mt19937_64& rng);
+Tree grow_random(int max_depth,  size_t variable_count,
+                  mt19937_64& rng);
+Tree grow_full(int exact_depth,  size_t variable_count,
+                mt19937_64& rng);
 
 // MSE fila por fila. fold_constants = true pliega los subarboles sin variables antes de
 // evaluar (mismo resultado bit a bit). fitness no cambia el significado del arbol: solo
 // actualiza los campos `direct` y el valor plegado de sus nodos.
 double fitness(const Node& root, const Dataset& data, bool fold_constants = true);
 
-std::pair<Tree, Tree> crossover(const Node& a, const Node& b,
-                                std::mt19937_64& rng);
-Tree mutation(const Node& parent, std::size_t variable_count,
-              std::mt19937_64& rng, int new_subtree_max_depth = 3);
+ pair<Tree, Tree> crossover(const Node& a, const Node& b,
+                                 mt19937_64& rng);
+Tree mutation(const Node& parent,  size_t variable_count,
+               mt19937_64& rng, int new_subtree_max_depth = 3);
 
-std::pair<Tree, Tree> depth_protected_crossover(
-    const Node& a, const Node& b, int max_depth, std::mt19937_64& rng);
-Tree depth_protected_mutation(const Node& parent, std::size_t variable_count,
-                              int max_depth, std::mt19937_64& rng);
+ pair<Tree, Tree> depth_protected_crossover(
+    const Node& a, const Node& b, int max_depth,  mt19937_64& rng);
+Tree depth_protected_mutation(const Node& parent,  size_t variable_count,
+                              int max_depth,  mt19937_64& rng);
 
 struct GPOptions {
-    std::size_t population_size = 40; // Para probar; el benchmark pide 5000.
+     size_t population_size = 40; // Para probar; el benchmark pide 5000.
     int max_depth = 5;
-    std::size_t generations = 5; // El manual NO fija generaciones.
-    std::uint64_t seed = 42;
+     size_t generations = 5; // El manual NO fija generaciones.
+     uint64_t seed = 42;
     // Optimizaciones exactas (el resultado del GP no cambia); --no-fold y --no-cut las apagan.
     bool fold_constants = true; // plegar subarboles sin variables antes de evaluar
     bool early_cut = true;      // dejar de evaluar un hijo que ya no puede quedar en el mejor 50%
@@ -173,13 +176,13 @@ struct GPOptions {
     bool skip_duplicates = true;
     // Se llama al terminar cada generacion (0 = poblacion inicial) con su mejor MSE, para
     // irlo mostrando en vivo. No toca el generador aleatorio: el GP da lo mismo con o sin el.
-    std::function<void(std::size_t generation, double best_mse)> on_generation;
+     function<void( size_t generation, double best_mse)> on_generation;
 };
 
 struct GPResult {
     Tree best;
     double best_fitness = 0.0;
-    std::vector<double> best_fitness_per_generation;
+     vector<double> best_fitness_per_generation;
 };
 
 // La inicializacion es 100% grow_full; variacion y reemplazo 50/50.
@@ -188,9 +191,9 @@ GPResult full_gp(const Dataset& data, const GPOptions& options);
 
 struct CrossoverTiming {
     int depth = 0;
-    std::size_t trees = 0;
-    std::size_t resident_trees = 0; // padres en memoria al mismo tiempo
-    std::size_t crossovers = 0;
+     size_t trees = 0;
+     size_t resident_trees = 0; // padres en memoria al mismo tiempo
+     size_t crossovers = 0;
     double seconds = 0.0;
     double mean_seconds_per_crossover = 0.0;
     double mean_nodes_per_tree = 0.0;
@@ -201,10 +204,10 @@ struct CrossoverTiming {
 // si no hay RAM suficiente, batch_pairs = 2500 deja 5000 arboles a la vez.
 // El cronometro mide SOLO crossover (clonacion + intercambio). Los hijos se
 // liberan cada pocos cruces, fuera del intervalo cronometrado.
-CrossoverTiming benchmark_crossover(std::size_t trees, int depth,
-                                     std::size_t variables,
-                                     std::uint64_t seed = 42,
-                                     std::size_t batch_pairs = 0);
+CrossoverTiming benchmark_crossover( size_t trees, int depth,
+                                      size_t variables,
+                                      uint64_t seed = 42,
+                                      size_t batch_pairs = 0);
 
 // Pruebas deterministas de todas las piezas importantes.
 void run_tests();
