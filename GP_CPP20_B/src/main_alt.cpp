@@ -1,6 +1,6 @@
 //Cambios, no usa std:: ya que esta definido directamente ya en gp.hpp, se elimina la libreria string, ya esta incluida en gp.hp
 //Se acomoda la impresión de los datos para que sean mas entendibles y se vean acomodados.
-#include "gp.hpp"
+#include "gp_1.hpp"
 
 #include <chrono>
 #include <cstdio>
