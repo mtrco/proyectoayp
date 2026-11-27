@@ -136,8 +136,9 @@ se parecen muchísimo a sus padres**, y por eso el cache de C funciona tan bien.
 - N debe ser múltiplo de 4: N/4 crossovers dan N/2 hijos y N/2 mutaciones dan los otros N/2.
 - Población inicial: 100% `grow_full`. Benchmark: N = 5,000, profundidades 7, 9 y 12
   (cada una en un comando aparte), 100 generaciones (el manual no las fija; se acordó 100),
-  reportando el mejor MSE de cada generación. Las mediciones de este documento son
-  anteriores y usan 10 generaciones.
+  semilla 5 por defecto, reportando el mejor MSE de cada generación (`--history`). Las
+  mediciones de la sección 7.1 son de una versión anterior y usan 10 generaciones; las de
+  la sección 7.2 usan el protocolo actual.
 - Reemplazo con **orden estable**: en un empate de MSE gana el que llegó primero. Las tres
   implementaciones lo hacen igual.
 
@@ -147,7 +148,11 @@ se parecen muchísimo a sus padres**, y por eso el cache de C funciona tan bien.
   RAM, de 5,000 en 5,000: `--batch-pairs=2500`), profundidades 7, 9, 10, 12 y 15, 5,000
   cruces. Solo se cronometra el crossover. Los hijos se liberan cada 16 cruces, fuera del
   cronómetro.
-- **GP completo:** el tiempo total de `full_gp`.
+- **GP completo:** el tiempo total de `full_gp`, con el dataset oficial `datos/dataset3a.csv`.
+  El mejor MSE de cada generación se escribe después de detener el cronómetro.
+- **Un proceso por profundidad**, en los dos benchmarks: `benchmarks/benchmark_A.ps1`,
+  `benchmark_B.ps1` y `benchmark_C.ps1` (uno por implementación) o `correr_benchmarks.ps1`
+  (las tres, con la verificación cruzada antes de medir).
 - **Sin paralelismo:** todo corre en un solo hilo (en Julia, el recolector de basura también
   usa 1 hilo; `correr_benchmarks.ps1` lo registra).
 - En Julia, antes de cronometrar se hace una corrida pequeña de calentamiento para que la
@@ -221,6 +226,8 @@ explica por qué). "Nuevo" = agregado en esta revisión; el resto ya existía.
 | B8 | **Corte temprano exacto + orden estable** | B | trabajo extra | 8-29% de la evaluación de hijos | nuevo |
 | B9 | **Árboles generados en preorden** | B | memoria | crossover 1.4-2.0× | nuevo |
 | B10 | Compilación Release con LTO; probar clang-cl | B | código máquina | clang 1.2-1.4× sobre g++ en el GP | recomendación |
+| B11 | **Evaluar primero los hijos de mejores padres** | B, C | trabajo extra | 5-6.6% del GP (B, dataset3a) | nuevo |
+| B12 | **Hijos idénticos a su padre: MSE del padre, sin evaluar** | B, C | trabajo extra | 5.5-7% del GP (B y C, Windows) | nuevo |
 | C1 | Nodos inmutables y subárboles compartidos | C | copias | clonar = 0 | existente |
 | C2 | Copia de camino | C | copias | ~1,000× menos nodos en prof. 15 | existente |
 | C3 | Metadatos en el nodo (tamaño, altura, mayor variable) | C | trabajo extra | O(1) en vez de O(n) | existente / ampliado |
@@ -228,7 +235,7 @@ explica por qué). "Nuevo" = agregado en esta revisión; el resto ya existía.
 | C5 | **Árboles en preorden** | C | memoria | (con C4) crossover 1.1-1.9× | nuevo |
 | C6 | Cache de resultados por nodo, en bloques | C | trabajo extra | generaciones casi gratis | existente / rehecho |
 | C7 | **Evaluador sin cache y sin saltos para subárboles chicos** | C | saltos, revisiones | 2.74 → 2.13 ns por nodo y fila | nuevo |
-| C8 | **S (tamaño mínimo con cache) elegido por velocidad** | C | trabajo extra | 8-11% | nuevo |
+| C8 | **S (tamaño mínimo con cache) elegido por velocidad** | C | trabajo extra | 8-11%; con dataset3a, 30% en prof. 12 | nuevo / ajustado |
 | C9 | **Plegado de constantes** | C | trabajo extra | (en el total) | nuevo |
 | C10 | **Corte temprano exacto** | C | trabajo extra | 4-7% de las filas (modelo) | nuevo |
 | C11 | **Compactación del grafo** en corridas largas | C | memoria | memoria acotada | nuevo |
@@ -332,7 +339,48 @@ Release con `/O2 /GL /LTCG` (MSVC) o `-O3 -flto` (g++/clang). La evaluación sin
 mucho más con clang (2.0 contra 2.9 ns). En Windows conviene medir **clang-cl** (Visual
 Studio Installer → "C++ Clang tools for Windows"; en CMake, toolset `ClangCL`): usa la
 biblioteca estándar de MSVC, así que las corridas son las mismas que con MSVC. Confirmar
-con el profesor.
+con el profesor. El proyecto ya trae los presets `x64-clang-release` y
+`x64-clang-avx2-release` en `CMakePresets.json`.
+
+### B11. Evaluar primero los hijos de mejores padres (`full_gp`; `--no-order` lo apaga; también C) — nuevo
+
+El corte temprano (B8) necesita un umbral: el (N/2)-ésimo mejor MSE entre los hijos ya
+evaluados. Si los hijos se evalúan en el orden en que se crean, el umbral tarda en bajar.
+Ahora primero se **crean** todos los hijos (mismo orden y mismo consumo del generador) y
+después se **evalúan empezando por los de mejores padres** (el padre del que el hijo hereda
+la raíz; orden estable). Los buenos hijos aparecen antes, el umbral baja antes y se dejan de
+evaluar más hijos que no pueden sobrevivir. El orden de evaluación no cambia el MSE de
+ningún sobreviviente ni el orden de creación, que decide los empates. Medido en B con
+dataset3a: 5% a 6.6% menos tiempo del GP completo.
+
+### B12. Hijos idénticos a su padre (`protected_crossover_impl`, `protected_mutation_impl`; `--no-dup` lo apaga; también C) — nuevo
+
+Entre 6% y 15% de los hijos son **idénticos a uno de sus padres** (medido en B con
+dataset3a; la proporción sube al final, cuando la población converge):
+
+- un crossover que intercambia dos subárboles iguales (por ejemplo, la hoja `x1` por la
+  hoja `x1`) da dos hijos iguales a sus padres;
+- una mutación que pone un subárbol igual al que quita;
+- el intercambio de raíces (los dos puntos de corte son raíces, o los 128 intentos del
+  crossover protegido fallan) da los padres intercambiados.
+
+Mismo árbol, mismo MSE: el hijo recibe el MSE del padre sin evaluar las filas. Detectarlo
+cuesta casi nada: al crear el hijo se compara el subárbol que sale con el que entra (casi
+siempre una hoja). Las constantes solo cuentan como iguales si tienen los mismos bits. En C,
+además, el hijo es el padre mismo: no se copia el camino. Con el corte temprano, el hijo se
+registra igual que si se hubiera evaluado (+∞ si su MSE pasa del umbral), así que el GP es
+idéntico con y sin `--no-dup`. Es la versión mínima de la detección de duplicados con hash
+de Zobrist que usa Operon (Burlacu, 2025): solo detecta copias de un padre, que son la
+mayoría.
+
+| Windows, dataset3a, semilla 5 | Prof. 7 (30 gen.) | Prof. 9 (30 gen.) | Prof. 9 (100 gen.) |
+|---|---|---|---|
+| B con `--no-dup` | 17.18 / 17.21 s | 55.11 / 54.14 s | — |
+| B | **16.39 / 16.13 s** (−5.5%) | **50.93 / 50.51 s** (−7.1%) | — |
+| C con `--no-dup` | — | — | 52.9 / 55.7 s |
+| C | — | — | **51.4 / 50.3 s** (−6%) |
+
+Mismo mejor MSE en todas las corridas (B: 0.305435791 y 0.345015636; C: 0.103945666).
 
 ### C1 y C2. Nodos inmutables, subárboles compartidos y copia de camino (`_replace!`)
 
@@ -407,9 +455,24 @@ inicial cuesta. Barrido medido (segundos por corrida, promedio de 3 semillas):
 | 9 | — | 0.92 | 0.84 | **0.82** | 1.04 | — |
 | 12 | — | — | 3.12 | **2.76** | 2.76 | 3.17 |
 
-Regla nueva: S = 16, o 32 en profundidad ≥ 11, y más grande si el cache no cabe en
-`--cache-mb`. Con el dataset oficial (otro número de filas) conviene repetir el barrido
-(`--cache-min-size=K`).
+Regla: S = 16, o 32 en profundidad ≥ 11, y más grande si la estimación del cache pasa de
+**4 veces** `--cache-mb` (1024 MB por defecto). La estimación es muy conservadora, y la
+memoria real la acota la compactación del grafo (C11).
+
+**Ajuste con el dataset oficial.** Con dataset3a (961 filas, contra 49 de `ejemplo.csv`)
+cada resultado guardado ocupa unos 7.7 KB, y la regla anterior (límite de 1 vez el
+presupuesto) subía S hasta 256 en profundidad 12, donde casi no queda cache. Barrido en
+Windows (semilla 1, 10 generaciones, mismo MSE en todas):
+
+| S | Prof. 7 | Prof. 9 | Prof. 12 |
+|---|---|---|---|
+| 16 | **6.14 s** | 12.40 s | 72.4 s |
+| 32 | 6.80 s | **11.59 s** | 39.9 s |
+| 64 | 9.16 s | 14.16 s | **39.1 s** |
+| regla anterior (16, 32, 256) | 6.18 s | 12.25 s | 53.6 s |
+
+La regla actual elige 16, 16 y 64: en profundidad 12 baja de 53.6 s a 37.4 s, con un pico
+de unos 4 GB de RAM. Subir `--cache-mb` a 4096 no era más rápido y subía el pico a 8.7 GB.
 
 ### C9. Plegado de constantes en C (`_op_record`; `--no-fold` lo apaga) — nuevo
 
@@ -454,6 +517,15 @@ liberar hijos (cada 16 cruces) quedan fuera del cronómetro; un solo hilo.
 | Crossover "fusionado" sin lista de puntos de corte en B | Como máximo 15-20%; cambia la estructura del código convencional |
 | Evaluador híbrido en B (con saltos si el árbol es chico) | Sin ganancia consistente medida |
 | Diferir la recolección de basura fuera del cronómetro del GP | Sería esconder trabajo, no ahorrarlo |
+| Evaluación incremental con propagación fallida (Langdon) | C ya recalcula solo el camino nuevo; lo que cuesta son los subárboles chicos cerca del corte, que esto no evita |
+| Evaluar en SIMD varias filas, hilos, GPU | Son evaluación por lotes o paralelismo: prohibidos |
+| Optimizar constantes por búsqueda local; agregar seno | Mejoraría mucho el MSE, pero cambia el algoritmo y los operadores del manual |
+
+**Pendientes de medir o de preguntar al profesor:** evaluar con una pila los subárboles
+contiguos de C (árbol postfijo; el profesor dijo que es válido) y guardar en cache, por
+valor de la variable, los subárboles que dependen de una sola variable (dataset3a es una
+cuadrícula de 31 × 31, así que solo hay 31 valores de x1 y 31 de x2; cerca de la mitad del
+trabajo de evaluar la población inicial está en esos subárboles).
 
 ---
 
@@ -467,14 +539,16 @@ cambia qué operaciones se hacen ni en qué orden se suman las filas:
 - el plegado calcula una vez el mismo valor que se calcularía en cada fila;
 - el cache guarda valores, no los cambia;
 - el corte temprano solo afecta a hijos que de todos modos se descartan;
+- un hijo idéntico a su padre tiene el mismo MSE que su padre;
+- el orden en que se evalúan los hijos no cambia el MSE de ninguno;
 - el preorden cambia dónde quedan los nodos en memoria, no qué árbol se genera.
 
 **Pruebas que lo comprueban** (todas pasan):
 
 | Comando | Qué comprueba |
 |---|---|
-| `gp_b --test` | Lo anterior, más: MSE idéntico a `Node::eval` en 400 árboles con datos extremos (con y sin plegado, también en hijos de crossover y mutación), plegado, preorden con el mismo consumo del generador, y el GP igual con y sin `--no-fold --no-cut` |
-| `julia GP_JL_C/main.jl --test` | 1,582 comprobaciones: registro de 24 bytes, operador sin saltos = con saltos (Inf, NaN, ceros), preorden, plegado, cache con y sin plegado, corte temprano, copia de camino, y el GP igual con/sin cache, plegado, corte y compactación |
+| `gp_b --test` | Lo anterior, más: MSE idéntico a `Node::eval` en 400 árboles con datos extremos (con y sin plegado, también en hijos de crossover y mutación), plegado, preorden con el mismo consumo del generador, detección de hijos idénticos a su padre (mismos hijos y mismo consumo del generador en 3,000 cruces y mutaciones), y el GP igual con y sin `--no-fold --no-cut --no-order --no-dup` |
+| `julia GP_JL_C/main.jl --test` | 1,582 comprobaciones: registro de 24 bytes, operador sin saltos = con saltos (Inf, NaN, ceros), preorden, plegado, cache con y sin plegado, corte temprano, copia de camino, detección de hijos idénticos a su padre, tamaño automático del cache con 961 filas, y el GP igual con/sin cache, plegado, corte, orden, `--no-dup` y compactación |
 | `julia GP_JL_A/main.jl --test` | 1,116 comprobaciones de A |
 | `julia GP_JL_C/tools/cross_check.jl` | 56,116 comprobaciones: A y C generan los mismos árboles, los mismos hijos y la misma corrida completa |
 | `julia GP_JL_C/tools/verificar_con_b.jl gp_b` | 3,280 árboles generados por B evaluados por A, B y C: mismo MSE bit a bit |
@@ -484,6 +558,8 @@ cambia qué operaciones se hacen ni en qué orden se suman las filas:
 ---
 
 ## 7. Resultados
+
+### 7.1 Versión anterior, contenedor Linux, `ejemplo.csv`, 10 generaciones
 
 Medido en un contenedor Linux (Intel Xeon 2.1 GHz, un hilo), g++ 13.3 y clang 18.1 con
 `-O3`, Julia 1.13.4 con `-O3`, `data/ejemplo.csv` (49 filas). "Antes" es el commit
@@ -523,6 +599,70 @@ misma semilla, excepto B entre versiones: el orden estable (B8) cambia el orden 
 sobrevivientes. Las corridas de B tampoco coinciden entre compiladores con bibliotecas
 estándar distintas (MSVC contra g++), porque `std::uniform_int_distribution` se implementa
 distinto; clang-cl usa la de MSVC.
+
+### 7.2 Protocolo actual, equipo de pruebas (Windows), dataset3a
+
+AMD Ryzen 7 170, 15.3 GB de RAM, Windows 11, MSVC (x64-Release) y Julia 1.13.4 con `-O3`,
+un hilo, población 5,000, semilla 5, un proceso por profundidad.
+
+| GP completo, C, 100 generaciones | Prof. 7 | Prof. 9 | Prof. 12 |
+|---|---|---|---|
+| Tiempo | 38.7 s | 50.3-53.4 s | 101.5-112.2 s (una corrida dio 131.8 s por ruido externo) |
+| Mejor MSE | 0.10998153 | 0.103945666 | 0.125202855 |
+
+En C la semilla importa: con las semillas 1 a 5, 7, 11, 42, 123 y 2026, la suma de las tres
+profundidades fue de 199 s (semilla 5, la más rápida y con el mejor MSE) a 267 s. B con 100
+generaciones en profundidad 12 tarda, según la medición con 10 generaciones, unos 25-30
+minutos.
+
+| Crossover (µs por cruce, 10,000 árboles en memoria) | Prof. 7 | Prof. 9 | Prof. 10 | Prof. 12 | Prof. 15 |
+|---|---|---|---|---|---|
+| B | 4.6-4.9 | 14.8-15.3 | 25.7-25.9 | 83-85 | 490-570 |
+| C | 0.71-0.79 | 0.99-1.20 | 1.14-1.32 | 1.63-1.87 | 2.6-2.9 |
+
+(El crossover no depende del dataset; medido con 5 semillas en la versión del 20 de
+noviembre.)
+
+### 7.3 Sobre el MSE con dataset3a
+
+dataset3a es exactamente `sin(sqrt(x1² + x2²))` en una cuadrícula de 31 × 31 puntos en
+[-5, 5]² (el error con esa función es del orden de 10⁻³²). Los operadores del manual
+(`+ − × ÷ √`) no incluyen seno, así que ninguna implementación puede llegar a MSE 0: solo
+aproximarla. Referencias para leer el MSE:
+
+| Modelo | MSE | Varianza explicada |
+|---|---|---|
+| Una constante (la media) | 0.466 | 0% |
+| Regresión lineal en x1 y x2 | 0.466 | 0% |
+| GP, semilla 5, 100 generaciones | 0.104-0.125 | 73-78% |
+| Polinomio de grado 5 (21 términos, mínimos cuadrados) | 0.035 | 93% |
+
+Algunas corridas se quedan cerca de una constante (MSE 0.43-0.47); esa variación entre
+semillas es típica de la GP clásica. A, B y C dan exactamente el mismo MSE para el mismo
+árbol: un MSE alto no indica un error de implementación sino un límite del algoritmo y de
+los operadores del manual.
+
+### 7.4 Comparación con otros sistemas
+
+La medida usual es cuántos nodos por fila se evalúan por segundo (GPops/s):
+
+| Sistema | Velocidad | Cómo |
+|---|---|---|
+| B | 0.35-0.5 × 10⁹ (2.0-2.9 ns por nodo y fila) | fila por fila, 1 hilo, sin SIMD |
+| C | ~2-3 × 10⁹ equivalentes (estimado: hace en 37 s lo que a B le toma 204 s) | cache y subárboles compartidos, 1 hilo |
+| DynamicExpressions.jl (base de PySR) | ~1 × 10⁹ (607 ns para 6 nodos × 100 filas) | evaluación por lotes |
+| Intérprete MIMD con AVX2 (de Melo et al.) | 7.5 × 10⁹ en un núcleo | SIMD |
+| GPquick (Langdon) | 139 × 10⁹ con 48 hilos | SIMD AVX-512 y hilos |
+| DEAP (Python) | ~6 × 10⁴ nodos/s (comparación de easyFastGP) | intérprete en Python |
+
+B está a unas 2 veces de los sistemas por lotes y a unas 15 de los SIMD de un núcleo: esa
+distancia es la esperada, porque la evaluación por lotes y el paralelismo están
+prohibidos. Frente a herramientas en Python está varios órdenes de magnitud arriba. C se
+acerca a los SIMD de un núcleo sin usar SIMD. Fuentes: de Melo et al., "A MIMD interpreter
+for Genetic Programming" (EvoApplications 2020); Langdon y Banzhaf, "Faster Genetic
+Programming GPquick via multicore and Advanced Vector Extensions" (2019); documentación de
+DynamicExpressions.jl; README de easyFastGP; Burlacu, "Zobrist Hash-based Duplicate
+Detection in Symbolic Regression" (2025).
 
 ---
 
@@ -571,6 +711,8 @@ python3 docs/tools/generar_figuras.py docs/tools/resultados.json
 | **Copia de camino** | Crear un árbol modificado copiando solo los nodos de la raíz al cambio y compartiendo el resto |
 | **DAG** | Grafo dirigido sin ciclos: como un árbol, pero un nodo puede tener varios padres (subárboles compartidos) |
 | **Elitismo** | El mejor individuo nunca se pierde entre generaciones |
+| **GPops/s** | Operaciones de GP por segundo: nodos evaluados por fila, por segundo |
+| **Hijo idéntico a su padre** | Hijo cuyo árbol es igual al de un padre (por ejemplo, un crossover que intercambia dos hojas `x1`); recibe el MSE del padre |
 | **`isbits`** | En Julia, un tipo sin referencias a otros objetos: se guarda "en línea" dentro de un arreglo |
 | **JIT** | Compilación "justo a tiempo": Julia compila cada función la primera vez que se usa |
 | **Montículo (heap)** | Estructura que da el máximo de un conjunto en O(1) y lo actualiza en O(log n) |

@@ -21,3 +21,10 @@ eficiencia** de B y C, con sus mediciones.
 - `correr_benchmarks.ps1`: las tres implementaciones juntas, con la verificación cruzada
   entre A, B y C antes de medir (Windows).
 - `verificar_cambios.ps1`: compara C contra una copia de respaldo anterior.
+
+**Optimizaciones que se pueden apagar** (B y C; todas dan exactamente el mismo resultado,
+solo cambian el tiempo): `--no-fold` (plegado de constantes), `--no-cut` (corte temprano
+exacto), `--no-order` (evaluar primero los hijos de mejores padres) y `--no-dup` (hijos
+idénticos a su padre reciben su MSE sin evaluarse). Los scripts de benchmark las apagan
+con `-SinPendientes`. El detalle y las mediciones están en
+[`docs/README.md`](docs/README.md#5-catálogo-de-técnicas-de-eficiencia).

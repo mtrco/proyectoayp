@@ -310,13 +310,14 @@ su MSE pasa del umbral), asi que el GP es exactamente el mismo con y sin `--no-d
 
 ## Limitaciones / mejoras propuestas
 
-1. Esta es una version correcta de referencia funcional, **no la mas rapida posible**.
+1. ~~Version de referencia, no la mas rapida posible~~: ya tiene todas las optimizaciones
+   descritas arriba (ver `docs/README.md`, seccion 5).
 2. ~~Pool/arena para los nodos~~: hecho (`detail::NodePool`).
 3. El crossover protegido prueba hasta 128 cortes y puede terminar en intercambio
    de raices; esta estrategia es valida en profundidad, pero puede reducir diversidad.
 4. Generaciones son parametrizables; el manual no define una cifra.
 5. Validar con el docente lo que falta del protocolo (semillas, dataset, repeticiones).
-6. Probar `/O2 /GL /LTCG` y medir antes de introducir mas optimizaciones.
+6. ~~Probar `/O2 /GL /LTCG`~~: es la configuracion Release de `CMakeLists.txt`.
 7. ~~Nodo mas compacto y arena de nodos~~: hecho; en profundidad 15 con 10,000 arboles
    la RAM baja de unos 7 GB a unos 4.8 GB.
 8. Pendientes de confirmar con el profesor: PGO de MSVC y compilar con clang-cl.
