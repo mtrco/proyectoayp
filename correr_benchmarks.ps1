@@ -7,8 +7,10 @@
 #
 # Opciones (todas tienen valor por defecto):
 #   -Data "ruta\dataset.csv"   dataset del GP completo (por defecto datos\dataset3a.csv, el oficial)
-#   -Seeds 1,2,3,4,5           semillas (una corrida por semilla)
-#   -Generations 10            el manual NO lo fija: acordarlo con el profesor
+#   -Seeds 5                   semillas (por defecto 5, la del proyecto; por ejemplo -Seeds 1,5)
+#   -Generations 100           generaciones del GP completo (el manual no lo fija; se acordo 100)
+#   -GPDepths 7,9,12           profundidades del GP completo. Cada una corre en un proceso
+#                              aparte (un comando por profundidad), no todas juntas.
 #   -Variables 2               variables para generar arboles en el benchmark de crossover
 #   -SoloCrossover / -SoloGP   correr solo una parte
 #   -IncluirA                  medir tambien A (no compite; tarda mas)
@@ -23,6 +25,14 @@
 #                              profesor no acepta esas dos optimizaciones.
 #
 # Regla confirmada: sin paralelismo. Todo corre en un solo hilo.
+#
+# Resultados del GP completo:
+#   gp_B.csv, gp_C.csv (gp_A.csv)                     tiempo y mejor MSE final de cada corrida
+#   gp_historial_B.csv, gp_historial_C.csv (y A)      mejor MSE de CADA generacion
+#                                                     (impl,seed,depth,generation,best_mse;
+#                                                     la generacion 0 es la poblacion inicial)
+# Con 100 generaciones y dataset3a el GP completo tarda varias horas, sobre todo B y A en
+# profundidad 12. Para probar antes: -Seeds 1 -GPDepths 7 -SoloGP
 
 param(
     [string]$B = "GP_CPP20_B\out\build\x64-Release\gp_b.exe",
@@ -30,8 +40,9 @@ param(
     [string]$C = "GP_JL_C",
     [string]$Julia = "julia",
     [string]$Data = "datos\dataset3a.csv",   # dataset oficial de la competencia
-    [int[]]$Seeds = @(1, 2, 3, 4, 5),
-    [int]$Generations = 10,
+    [int[]]$Seeds = @(5),
+    [int]$Generations = 100,
+    [int[]]$GPDepths = @(7, 9, 12),
     [int]$Variables = 2,
     [switch]$SoloCrossover,
     [switch]$SoloGP,
@@ -42,7 +53,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 $CrossDepths = "7,9,10,12,15"
-$GPDepths = "7,9,12"
 
 if (-not (Test-Path $B)) { throw "No se encontro el ejecutable de B: $B (compila en x64-Release o pasa -B)" }
 foreach ($dir in @($A, $C)) {
@@ -109,6 +119,7 @@ $pendientes = if ($SinPendientes) { "apagados (--no-fold --no-cut)" } else { "ac
     "Plegado de constantes y corte temprano (GP completo): $pendientes",
     "Semillas: $($Seeds -join ',')",
     "Generaciones: $Generations",
+    "Profundidades del GP: $($GPDepths -join ', ') (un proceso por profundidad)",
     "Variables (crossover): $Variables",
     "Padres en memoria a la vez (crossover): $arbolesEnMemoria",
     "Paralelismo: ninguno (un solo hilo)",
@@ -128,15 +139,35 @@ if (-not $SoloGP) {
 }
 
 # 4. Benchmark del GP completo --------------------------------------------------
+# Cada profundidad corre en un proceso aparte (un comando por profundidad). Ademas del
+# tiempo y el mejor MSE final, cada corrida escribe el mejor MSE de cada generacion
+# (--history, fuera del cronometro), que se junta en gp_historial_<impl>.csv.
+$historyTmp = Join-Path (Resolve-Path $out).Path "historial_tmp.csv"
+
+function Invoke-GP([string]$Impl, [string]$Exe, [string[]]$Arguments, [int]$Seed) {
+    Invoke-Bench $Impl $Exe ($Arguments + "--history=$historyTmp") $Seed "$out\gp_$Impl.csv"
+    $rows = @(Get-Content $historyTmp)
+    $file = "$out\gp_historial_$Impl.csv"
+    if (-not (Test-Path $file)) {
+        "impl,seed," + $rows[0] | Out-File -FilePath $file -Encoding utf8
+    }
+    $rows | Select-Object -Skip 1 | ForEach-Object { "$Impl,$Seed,$_" } |
+        Out-File -FilePath $file -Append -Encoding utf8
+    Remove-Item $historyTmp
+}
+
 if (-not $SoloCrossover) {
-    Write-Host "`n[3] GP completo (poblacion 5000, profundidades $GPDepths, $Generations generaciones)"
+    Write-Host ("`n[3] GP completo (poblacion 5000, $Generations generaciones, profundidades " +
+                "$($GPDepths -join ', '), un proceso por profundidad)")
     foreach ($s in $Seeds) {
-        $common = @("--bench-gp", "--data=$Data", "--population=5000", "--depths=$GPDepths",
-                    "--generations=$Generations", "--seed=$s")
-        $extra = if ($SinPendientes) { @("--no-fold", "--no-cut") } else { @() }
-        Invoke-Bench "B" $B ($common + $extra) $s "$out\gp_B.csv"
-        Invoke-Bench "C" $Julia ($JuliaFlags + $CMain + $common + $extra) $s "$out\gp_C.csv"
-        if ($IncluirA) { Invoke-Bench "A" $Julia ($JuliaFlags + $AMain + $common) $s "$out\gp_A.csv" }
+        foreach ($d in $GPDepths) {
+            $common = @("--bench-gp", "--data=$Data", "--population=5000", "--depths=$d",
+                        "--generations=$Generations", "--seed=$s")
+            $extra = if ($SinPendientes) { @("--no-fold", "--no-cut") } else { @() }
+            Invoke-GP "B" $B ($common + $extra) $s
+            Invoke-GP "C" $Julia ($JuliaFlags + $CMain + $common + $extra) $s
+            if ($IncluirA) { Invoke-GP "A" $Julia ($JuliaFlags + $AMain + $common) $s }
+        }
     }
 }
 

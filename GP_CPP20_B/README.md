@@ -60,15 +60,21 @@ que el docente debe proporcionar. Formato: `x1,x2,...,y` (ultima columna la sali
 
 ```powershell
 .\gp_b.exe --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
-.\gp_b.exe --bench-gp --data=data/DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
+# GP completo: un comando por profundidad (no las tres juntas), 100 generaciones,
+# y el mejor MSE de cada generacion en un archivo aparte.
+.\gp_b.exe --bench-gp --data=..\datos\dataset3a.csv --population=5000 --depths=7 --generations=100 --history=historial_7.csv
+.\gp_b.exe --bench-gp --data=..\datos\dataset3a.csv --population=5000 --depths=9 --generations=100 --history=historial_9.csv
+.\gp_b.exe --bench-gp --data=..\datos\dataset3a.csv --population=5000 --depths=12 --generations=100 --history=historial_12.csv
 ```
+
+`--history=archivo.csv` escribe `depth,generation,best_mse` (MSE con 17 digitos) despues
+de detener el cronometro; la generacion 0 es la poblacion inicial.
 
 Para medir sin las dos optimizaciones pendientes de confirmar (mismo resultado):
 `--no-fold --no-cut`.
 
-El manual **no establece el numero de generaciones**, ni la cantidad concreta de
-variables para el primer benchmark ni el formato del dataset oficial. Sustituye
-`--generations=10`, el dataset y `--variables=2` cuando acuerden el protocolo.
+El manual **no establece el numero de generaciones**; se acordo usar **100** (valor por
+defecto de `--generations` en A, B y C). El dataset oficial es `datos/dataset3a.csv`.
 
 ## Intercambio de arboles con A y C (verificacion cruzada)
 

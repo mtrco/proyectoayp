@@ -167,12 +167,15 @@ julia main.jl --demo
 
 ```powershell
 julia --startup-file=no -O3 main.jl --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
-julia --startup-file=no -O3 main.jl --bench-gp --data=data\DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
+# GP completo: un comando por profundidad, 100 generaciones, mejor MSE de cada generacion
+julia --startup-file=no -O3 main.jl --bench-gp --data=..\datos\dataset3a.csv --population=5000 --depths=7 --generations=100 --history=historial_7.csv
 ```
 
 | Opcion | Significado |
 |---|---|
 | `--batch-pairs=K` | Parejas de padres en memoria a la vez en el benchmark de crossover. `0` (por defecto) = los 10,000 arboles a la vez, protocolo acordado; `2500` = 5,000 a la vez |
+| `--generations=G` | Generaciones del GP completo (100 por defecto, lo acordado) |
+| `--history=archivo.csv` | Escribe `depth,generation,best_mse` (17 digitos) fuera del cronometro; la generacion 0 es la poblacion inicial |
 | `--cache-mb=M` | Presupuesto aproximado del cache del GP, en MB (1024 por defecto; 0 = sin cache) |
 | `--cache-min-size=K` | Tamano minimo de subarbol que guarda cache (0 = automatico) |
 | `--no-fold` | Sin plegado de constantes (mismo resultado) |

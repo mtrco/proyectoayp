@@ -13,5 +13,11 @@ Tres implementaciones del mismo sistema de programación genética (regresión s
 diagramas, qué es un individuo, el MSE, cada función del manual y **todas las técnicas de
 eficiencia** de B y C, con sus mediciones.
 
-- `correr_benchmarks.ps1`: pruebas, verificación cruzada y benchmarks del manual (Windows).
+- `benchmarks\benchmark_A.ps1`, `benchmark_B.ps1` y `benchmark_C.ps1`: el benchmark de cada
+  implementación por separado, como lo pide el manual (crossover con 10,000 árboles en
+  profundidades 7, 9, 10, 12 y 15; GP completo con población 5,000 en profundidades 7, 9 y 12),
+  con 100 generaciones, semilla 5 por defecto, un proceso por profundidad y el mejor MSE de
+  cada generación. Uso: `powershell -ExecutionPolicy Bypass -File .\benchmarks\benchmark_B.ps1`.
+- `correr_benchmarks.ps1`: las tres implementaciones juntas, con la verificación cruzada
+  entre A, B y C antes de medir (Windows).
 - `verificar_cambios.ps1`: compara C contra una copia de respaldo anterior.

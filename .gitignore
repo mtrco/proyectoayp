@@ -104,3 +104,6 @@ respaldo_*/
 # ---------------------------------------------------------------------------
 # Las carpetas resultados_* que crea correr_benchmarks.ps1 no se suben.
 resultados_*/
+# Carpetas que crean probar_dataset3a.ps1 y probar_semillas.ps1.
+pruebas_*/
+semillas_*/

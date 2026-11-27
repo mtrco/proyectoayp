@@ -78,7 +78,8 @@ julia main.jl --demo
 
 ```powershell
 julia --startup-file=no -O3 main.jl --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
-julia --startup-file=no -O3 main.jl --bench-gp --data=data\DATASET_OFICIAL.csv --population=5000 --depths=7,9,12 --generations=10
+# GP completo: un comando por profundidad, 100 generaciones, mejor MSE de cada generacion
+julia --startup-file=no -O3 main.jl --bench-gp --data=..\datos\dataset3a.csv --population=5000 --depths=7 --generations=100 --history=historial_7.csv
 julia main.jl --eval-file --file=arboles.txt --data=data\ejemplo.csv
 julia main.jl --export-trees --count=100 --depth=6 --variables=2 --seed=1 [--full]
 ```
@@ -86,6 +87,8 @@ julia main.jl --export-trees --count=100 --depth=6 --variables=2 --seed=1 [--ful
 | Opcion | Significado |
 |---|---|
 | `--batch-pairs=K` | Parejas de padres en memoria a la vez en el benchmark de crossover. `0` (por defecto) = los 10,000; `2500` = 5,000 a la vez |
+| `--generations=G` | Generaciones del GP completo (100 por defecto, lo acordado) |
+| `--history=archivo.csv` | Escribe `depth,generation,best_mse` (17 digitos) fuera del cronometro; la generacion 0 es la poblacion inicial |
 | `--eval-file` | `MSE<TAB>profundidad<TAB>nodos<TAB>expresion`, MSE con 17 digitos (misma salida que `gp_b --eval-file`) |
 | `--export-trees` | Arboles sin perdida (17 digitos), uno por linea |
 

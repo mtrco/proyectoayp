@@ -134,8 +134,10 @@ se parecen muchísimo a sus padres**, y por eso el cache de C funciona tan bien.
 ### 2.6 El GP completo (`full_gp`)
 
 - N debe ser múltiplo de 4: N/4 crossovers dan N/2 hijos y N/2 mutaciones dan los otros N/2.
-- Población inicial: 100% `grow_full`. Benchmark: N = 5,000, profundidades 7, 9 y 12,
-  10 generaciones (el manual no fija las generaciones).
+- Población inicial: 100% `grow_full`. Benchmark: N = 5,000, profundidades 7, 9 y 12
+  (cada una en un comando aparte), 100 generaciones (el manual no las fija; se acordó 100),
+  reportando el mejor MSE de cada generación. Las mediciones de este documento son
+  anteriores y usan 10 generaciones.
 - Reemplazo con **orden estable**: en un empate de MSE gana el que llegó primero. Las tres
   implementaciones lo hacen igual.
 
@@ -530,14 +532,15 @@ distinto; clang-cl usa la de MSVC.
 # B (Linux; en Windows ver GP_CPP20_B/README.md)
 cmake -S GP_CPP20_B -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ./build/gp_b --test
-./build/gp_b --bench-gp --data=GP_CPP20_B/data/ejemplo.csv --population=5000 --depths=7,9,12 --generations=10
+# GP completo: un comando por profundidad (7, 9 y 12), 100 generaciones
+./build/gp_b --bench-gp --data=datos/dataset3a.csv --population=5000 --depths=7 --generations=100 --history=historial_B_7.csv
 ./build/gp_b --bench-crossover --trees=10000 --depths=7,9,10,12,15 --variables=2
 
 # C y A
 julia --startup-file=no -O3 GP_JL_C/main.jl --test
 julia --startup-file=no -O3 GP_JL_C/tools/cross_check.jl
 julia --startup-file=no -O3 GP_JL_C/tools/verificar_con_b.jl ./build/gp_b
-julia --startup-file=no -O3 GP_JL_C/main.jl --bench-gp --data=GP_JL_C/data/ejemplo.csv --population=5000 --depths=7,9,12 --generations=10
+julia --startup-file=no -O3 GP_JL_C/main.jl --bench-gp --data=datos/dataset3a.csv --population=5000 --depths=7 --generations=100 --history=historial_C_7.csv
 
 # Sin las dos optimizaciones pendientes de confirmar con el profesor (mismo resultado)
 ./build/gp_b --bench-gp ... --no-fold --no-cut
@@ -545,7 +548,9 @@ julia GP_JL_C/main.jl --bench-gp ... --no-fold --no-cut
 ```
 
 En Windows, `correr_benchmarks.ps1` hace todo (pruebas, verificación cruzada y
-benchmarks); `-SinPendientes` mide sin plegado ni corte temprano.
+benchmarks); `-SinPendientes` mide sin plegado ni corte temprano. Corre cada profundidad
+del GP en un proceso aparte, con 100 generaciones, y guarda el mejor MSE de cada generación
+en `gp_historial_<impl>.csv`.
 
 **Regenerar las figuras** (Python 3, sin paquetes externos):
 

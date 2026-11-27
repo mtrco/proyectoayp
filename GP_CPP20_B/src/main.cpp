@@ -17,6 +17,7 @@ struct Args {
     std::string data = "data/ejemplo.csv";
     std::string depths;
     std::string file;
+    std::string history;  // --history=archivo.csv: mejor MSE de cada generacion
     std::size_t trees = 10000;
     std::size_t count = 100;
     int depth = 5;
@@ -25,10 +26,10 @@ struct Args {
     bool early_cut = true;      // --no-cut lo apaga
     bool order_by_parent = true; // --no-order lo apaga
     std::size_t population = 5000;
-    std::size_t generations = 10; // El manual no especifica este valor.
+    std::size_t generations = 100; // El manual no lo fija; se acordo usar 100.
     std::size_t variables = 2;
     std::size_t batch_pairs = 0; // 0 = los 10000 arboles en memoria a la vez
-    std::uint64_t seed = 42;
+    std::uint64_t seed = 5;  // semilla por defecto del proyecto
 };
 
 // std::stoull acepta "-1" y lo convierte en 18446744073709551615: se exige un
@@ -58,6 +59,7 @@ Args parse_args(int argc, char** argv) {
         if (key == "--data") opts.data = value;
         else if (key == "--depths") opts.depths = value;
         else if (key == "--file") opts.file = value;
+        else if (key == "--history") opts.history = value;
         else if (key == "--count") opts.count = parse_unsigned(key, value);
         else if (key == "--depth") opts.depth = std::stoi(value);
         else if (key == "--trees") opts.trees = parse_unsigned(key, value);
@@ -88,18 +90,20 @@ void print_help() {
   gp_b --test
   gp_b --demo [--data=data/ejemplo.csv]
   gp_b --bench-crossover [--trees=10000] [--depths=7,9,10,12,15]
-                          [--variables=2] [--seed=42] [--batch-pairs=0]
+                          [--variables=2] [--seed=5] [--batch-pairs=0]
   gp_b --bench-gp [--data=dataset.csv] [--population=5000]
-                  [--depths=7,9,12] [--generations=10] [--seed=42] [--no-fold] [--no-cut]
-                  [--no-order]
+                  [--depths=7,9,12] [--generations=100] [--seed=5] [--history=archivo.csv]
+                  [--no-fold] [--no-cut] [--no-order]
   gp_b --eval-file --file=arboles.txt [--data=dataset.csv]
        Lee una expresion por linea e imprime MSE (17 digitos), profundidad,
        nodos y la expresion, separados por tabuladores (para comparar con A y C).
-  gp_b --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=42] [--full]
+  gp_b --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=5] [--full]
        Escribe arboles grow_random (o grow_full) sin perdida, uno por linea.
 
 El CSV debe tener cabecera opcional, x1,x2,...,y, y como ultima columna.
-El manual NO especifica el numero de generaciones; acordarlo con el docente.
+El manual no fija el numero de generaciones; se acordo usar 100 (valor por defecto).
+--history=archivo.csv: escribe el mejor MSE de cada generacion (depth,generation,best_mse,
+con 17 digitos), fuera del cronometro. La generacion 0 es la poblacion inicial.
 En el benchmark de crossover se mide solo el crossover, no generar padres.
 Por defecto los 10000 padres estan en memoria a la vez (protocolo acordado).
 --batch-pairs=2500 deja 5000 a la vez si no alcanza la RAM.
@@ -111,6 +115,12 @@ Las tres optimizaciones dan el mismo resultado; se pueden apagar si el profesor 
 
 void run_gp_benchmark(const gp::Dataset& data, const std::vector<int>& depths,
                       const Args& args) {
+    std::ofstream history;
+    if (!args.history.empty()) {
+        history.open(args.history);
+        if (!history) throw std::runtime_error("No se pudo crear: " + args.history);
+        history << "depth,generation,best_mse\n" << std::setprecision(17);
+    }
     std::cout << "depth,population,generations,elapsed_seconds,best_mse,best_expression\n";
     for (int depth : depths) {
         gp::GPOptions opts;
@@ -128,6 +138,15 @@ void run_gp_benchmark(const gp::Dataset& data, const std::vector<int>& depths,
         std::cout << depth << ',' << opts.population_size << ',' << opts.generations << ','
                   << std::setprecision(9) << seconds << ',' << result.best_fitness << ",\""
                   << result.best->expression() << "\"\n";
+        std::cout.flush();
+        // Mejor MSE de cada generacion (0 = poblacion inicial), despues del cronometro.
+        if (history) {
+            const auto& per_generation = result.best_fitness_per_generation;
+            for (std::size_t g = 0; g < per_generation.size(); ++g) {
+                history << depth << ',' << g << ',' << per_generation[g] << '\n';
+            }
+            history.flush();
+        }
     }
 }
 } // namespace

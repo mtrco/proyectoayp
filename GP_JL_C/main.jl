@@ -15,18 +15,21 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
   julia main.jl --test [-v]
   julia main.jl --demo [--data=data/ejemplo.csv]
   julia main.jl --bench-crossover [--trees=10000] [--depths=7,9,10,12,15] [--variables=2]
-                                  [--seed=42] [--batch-pairs=0]
+                                  [--seed=5] [--batch-pairs=0]
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000] [--depths=7,9,12]
-                           [--generations=10] [--seed=42] [--cache-mb=1024] [--cache-min-size=0]
-                           [--no-fold] [--no-cut] [--no-order]
+                           [--generations=100] [--seed=5] [--history=archivo.csv]
+                           [--cache-mb=1024] [--cache-min-size=0] [--no-fold] [--no-cut] [--no-order]
   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
-  julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=42] [--full]
+  julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=5] [--full]
 
 --batch-pairs:    parejas de padres en memoria a la vez en el benchmark de crossover
                   (0 = los 10000 arboles a la vez, protocolo acordado; 2500 = 5000).
 --cache-mb:       presupuesto aproximado del cache de resultados del GP (0 = sin cache).
 --cache-min-size: tamano minimo de subarbol que guarda cache (0 = automatico segun --cache-mb).
+--history:        archivo CSV con el mejor MSE de cada generacion (depth,generation,best_mse,
+                  17 digitos), escrito fuera del cronometro. La generacion 0 es la poblacion inicial.
+--generations:    100 por defecto (el manual no lo fija; se acordo usar 100).
 --no-fold:        no plegar los subarboles sin variables.
 --no-cut:         sin corte temprano exacto de los hijos que no pueden sobrevivir.
 --no-order:       evaluar los hijos en orden de creacion (por defecto, primero los de mejores padres).
@@ -35,14 +38,15 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
 
 const INT_OPTIONS = Set(["trees", "population", "generations", "variables", "seed",
                          "batch-pairs", "count", "depth", "cache-mb", "cache-min-size"])
-const STRING_OPTIONS = Set(["data", "depths", "file"])
+const STRING_OPTIONS = Set(["data", "depths", "file", "history"])
 
 function parse_args(args)
     mode = isempty(args) ? "--help" : args[1]
     o = Dict{String, Any}(
         "data" => joinpath(@__DIR__, "data", "ejemplo.csv"), "depths" => "", "file" => "",
-        "trees" => 10000, "population" => 5000, "generations" => 10, "variables" => 2,
-        "seed" => 42, "batch-pairs" => 0, "count" => 100, "depth" => 5,
+        "history" => "",
+        "trees" => 10000, "population" => 5000, "generations" => 100, "variables" => 2,
+        "seed" => 5, "batch-pairs" => 0, "count" => 100, "depth" => 5,
         "cache-mb" => 1024, "cache-min-size" => 0, "full" => false, "verbose" => false,
         "fold" => true, "cut" => true, "order" => true)
     for arg in args[2:end]
@@ -109,6 +113,9 @@ function main(args)
     elseif mode == "--bench-gp"
         data = read_csv(o["data"])
         full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1))  # calentamiento
+        # Mejor MSE de cada generacion (0 = poblacion inicial), escrito fuera del cronometro.
+        history = isempty(o["history"]) ? nothing : open(o["history"], "w")
+        history === nothing || println(history, "depth,generation,best_mse")
         println("depth,population,generations,elapsed_seconds,best_mse,best_expression")
         for depth in parse_depths(o["depths"], "7,9,12")
             options = GPOptions(population_size=o["population"], max_depth=depth,
@@ -123,7 +130,14 @@ function main(args)
             @printf("%d,%d,%d,%.9g,%.9g,\"%s\"\n", depth, options.population_size,
                     options.generations, elapsed, result.best_fitness, expression(result.best))
             flush(stdout)
+            if history !== nothing
+                for (g, v) in enumerate(result.best_fitness_per_generation)
+                    println(history, depth, ',', g - 1, ',', format_number(v, 17))
+                end
+                flush(history)
+            end
         end
+        history === nothing || close(history)
     elseif mode == "--eval-file"
         isempty(o["file"]) && error("Falta --file=arboles.txt")
         data = read_csv(o["data"])
