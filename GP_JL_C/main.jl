@@ -19,6 +19,7 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000] [--depths=7,9,12]
                            [--generations=100] [--seed=5] [--history=archivo.csv]
                            [--cache-mb=1024] [--cache-min-size=0] [--no-fold] [--no-cut] [--no-order]
+                           [--no-dup]
   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
   julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=5] [--full]
@@ -33,7 +34,8 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
 --no-fold:        no plegar los subarboles sin variables.
 --no-cut:         sin corte temprano exacto de los hijos que no pueden sobrevivir.
 --no-order:       evaluar los hijos en orden de creacion (por defecto, primero los de mejores padres).
-                  Las tres optimizaciones dan el mismo resultado; se apagan si el profesor no las acepta.
+--no-dup:         evaluar tambien los hijos identicos a su padre (por defecto reciben el MSE del padre).
+                  Las cuatro optimizaciones dan el mismo resultado; se apagan si el profesor no las acepta.
 """
 
 const INT_OPTIONS = Set(["trees", "population", "generations", "variables", "seed",
@@ -48,7 +50,7 @@ function parse_args(args)
         "trees" => 10000, "population" => 5000, "generations" => 100, "variables" => 2,
         "seed" => 5, "batch-pairs" => 0, "count" => 100, "depth" => 5,
         "cache-mb" => 1024, "cache-min-size" => 0, "full" => false, "verbose" => false,
-        "fold" => true, "cut" => true, "order" => true)
+        "fold" => true, "cut" => true, "order" => true, "dup" => true)
     for arg in args[2:end]
         if arg == "--full"
             o["full"] = true
@@ -58,6 +60,8 @@ function parse_args(args)
             o["cut"] = false
         elseif arg == "--no-order"
             o["order"] = false
+        elseif arg == "--no-dup"
+            o["dup"] = false
         elseif arg == "-v"
             o["verbose"] = true
         elseif startswith(arg, "--") && occursin('=', arg)
@@ -122,7 +126,7 @@ function main(args)
                                 generations=o["generations"], seed=o["seed"],
                                 cache_mb=o["cache-mb"], cache_min_size=o["cache-min-size"],
                                 fold_constants=o["fold"], early_cut=o["cut"],
-                                order_by_parent=o["order"])
+                                order_by_parent=o["order"], skip_duplicates=o["dup"])
             GC.gc()  # memoria de la corrida anterior, fuera del cronometro
             t0 = time_ns()
             result = full_gp(data, options)

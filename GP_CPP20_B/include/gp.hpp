@@ -166,6 +166,10 @@ struct GPOptions {
     // Evaluar primero los hijos de mejores padres (--no-order lo apaga): el umbral del corte
     // temprano baja antes y se corta mas. Tampoco cambia el resultado.
     bool order_by_parent = true;
+    // Un hijo identico a su padre (crossover que intercambia dos subarboles iguales, mutacion
+    // que pone un subarbol igual al que quita, o intercambio de raices) recibe el MSE del
+    // padre sin evaluarse (--no-dup lo apaga). Mismo arbol => mismo MSE: no cambia el GP.
+    bool skip_duplicates = true;
 };
 
 struct GPResult {

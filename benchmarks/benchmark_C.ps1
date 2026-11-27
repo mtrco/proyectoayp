@@ -16,7 +16,8 @@
 #   -Seeds 5                 semillas (por defecto 5; por ejemplo -Seeds 1,5)
 #   -Generations 100         generaciones del GP completo
 #   -SoloCrossover / -SoloGP correr solo una parte
-#   -SinPendientes           GP sin plegado de constantes ni corte temprano (mismo resultado)
+#   -SinPendientes           GP sin plegado de constantes, corte temprano ni reutilizar el MSE
+#                            de hijos identicos a su padre (mismo resultado)
 #   -ParesEnMemoria -1       -1 = 10,000 a la vez (C ocupa ~1.3 GB); 2500 = 5,000 a la vez
 #   -Julia julia             ejecutable de Julia
 #   -Data ruta\dataset.csv   dataset del GP completo
@@ -47,13 +48,13 @@ $flags = @("--startup-file=no", "-O3")
 $extra = @()
 $pendientes = "activos"
 if ($SinPendientes) {
-    $extra += "--no-fold", "--no-cut"
-    $pendientes = "apagados (--no-fold --no-cut)"
+    $extra += "--no-fold", "--no-cut", "--no-dup"
+    $pendientes = "apagados (--no-fold --no-cut --no-dup)"
 }
 $info = @(
     "Implementacion: C (Julia, no convencional, competencia 2: mas rapida no convencional)"
 ) + (Get-JuliaInfo $Julia $flags) + @(
-    "Plegado de constantes y corte temprano (GP completo): $pendientes",
+    "Plegado, corte temprano y MSE de hijos identicos al padre (GP completo): $pendientes",
     "Cache de resultados del GP: automatico (--cache-mb=1024)"
 )
 

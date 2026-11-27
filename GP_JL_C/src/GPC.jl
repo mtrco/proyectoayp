@@ -68,6 +68,10 @@ const OP_SQRT = 0x06
 const RANDOM_OPS = (OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_SQRT)
 const BINARY_BY_CHAR = Dict('+' => OP_ADD, '-' => OP_SUB, '*' => OP_MUL, '/' => OP_DIV)
 const FOLDED = 0x01              # bandera: subarbol sin variables, valor ya calculado
+# Hijo de un operador protegido que es copia exacta de un padre (mismo arbol => mismo MSE).
+const COPY_NONE = 0x00           # hijo(s) nuevo(s)
+const COPY_PARENTS = 0x01        # hijo1 = padre a, hijo2 = padre b (subarboles iguales)
+const COPY_SWAPPED = 0x02        # hijo1 = padre b, hijo2 = padre a (intercambio de raices)
 
 _symbol(op::UInt8) = op == OP_ADD ? "+" : op == OP_SUB ? "-" : op == OP_MUL ? "*" :
                      op == OP_DIV ? "/" : "sqrt"
@@ -708,12 +712,23 @@ function mutation(parent::Tree, no_variables::Integer, rng::AbstractRNG,
     return Tree(g, _replace!(g, parent.i, k, replacement))
 end
 
-"""
-Crossover cuyos hijos no superan max_depth: el intercambio i <-> j es valido si
-prof_A(i) + altura_B(j) <= max y prof_B(j) + altura_A(i) <= max (misma regla que A
-y B: 128 intentos y, si ninguno sirve, intercambio de raices).
-"""
-function depth_protected_crossover(a::Tree, b::Tree, max_depth::Integer, rng::AbstractRNG)
+"Dos subarboles son iguales: misma forma, mismos operadores, mismas variables y constantes con los mismos bits."
+function _same_subtree(nodes::Vector{NodeRec}, x::Int32, y::Int32)::Bool
+    x == y && return true
+    a = @inbounds nodes[x]
+    b = @inbounds nodes[y]
+    (a.kind == b.kind && a.size == b.size) || return false
+    a.kind == K_CONST && return reinterpret(UInt64, a.value) == reinterpret(UInt64, b.value)
+    a.kind == K_VAR && return a.left == b.left
+    _same_subtree(nodes, a.left, b.left) || return false
+    return a.right == 0 || _same_subtree(nodes, a.right, b.right)
+end
+
+# Crossover protegido que ademas, con detect = true, avisa si un hijo es copia exacta de un
+# padre (COPY_PARENTS o COPY_SWAPPED) y en ese caso devuelve los padres mismos, sin crear
+# nodos. Solo compara: consume el generador igual y los hijos son los mismos arboles.
+function _protected_crossover(a::Tree, b::Tree, max_depth::Integer, rng::AbstractRNG,
+                              detect::Bool)
     _check_depth(max_depth)
     (tree_depth(a) > max_depth || tree_depth(b) > max_depth) &&
         throw(ArgumentError("Un padre supera max_depth"))
@@ -727,23 +742,45 @@ function depth_protected_crossover(a::Tree, b::Tree, max_depth::Integer, rng::Ab
         sub_b, depth_b = _node_at(nodes, b.i, j)
         if depth_a + Int(@inbounds(nodes[sub_b]).height) <= max_depth &&
            depth_b + Int(@inbounds(nodes[sub_a]).height) <= max_depth
-            return Tree(g, _replace!(g, a.i, i, sub_b)), Tree(g, _replace!(g, b.i, j, sub_a))
+            if detect
+                (i == 1 && j == 1) && return (b, a, COPY_SWAPPED)
+                _same_subtree(nodes, sub_a, sub_b) && return (a, b, COPY_PARENTS)
+            end
+            return (Tree(g, _replace!(g, a.i, i, sub_b)), Tree(g, _replace!(g, b.i, j, sub_a)), COPY_NONE)
         end
     end
-    return b, a
+    return (b, a, detect ? COPY_SWAPPED : COPY_NONE)
+end
+
+"""
+Crossover cuyos hijos no superan max_depth: el intercambio i <-> j es valido si
+prof_A(i) + altura_B(j) <= max y prof_B(j) + altura_A(i) <= max (misma regla que A
+y B: 128 intentos y, si ninguno sirve, intercambio de raices).
+"""
+function depth_protected_crossover(a::Tree, b::Tree, max_depth::Integer, rng::AbstractRNG)
+    c1, c2, _ = _protected_crossover(a, b, max_depth, rng, false)
+    return c1, c2
+end
+
+# Mutacion protegida que, con detect = true, avisa si el subarbol nuevo es igual al que
+# reemplaza; en ese caso devuelve el padre mismo (hijo identico, mismo MSE).
+function _protected_mutation(parent::Tree, no_variables::Integer, max_depth::Integer,
+                             rng::AbstractRNG, detect::Bool)
+    _check_depth(max_depth)
+    tree_depth(parent) > max_depth && throw(ArgumentError("El padre supera max_depth"))
+    g = parent.g
+    k = rand(rng, 1:node_count(parent))
+    old, depth = _node_at(g.nodes, parent.i, k)
+    budget = Int(max_depth) - depth
+    replacement = _grow!(g, rand(rng, 0:budget), Int(no_variables), rng, false)
+    (detect && _same_subtree(g.nodes, old, replacement)) && return (parent, true)
+    return (Tree(g, _replace!(g, parent.i, k, replacement)), false)
 end
 
 "Mutacion cuyo subarbol nuevo cabe en el presupuesto de profundidad restante."
 function depth_protected_mutation(parent::Tree, no_variables::Integer, max_depth::Integer,
                                   rng::AbstractRNG)
-    _check_depth(max_depth)
-    tree_depth(parent) > max_depth && throw(ArgumentError("El padre supera max_depth"))
-    g = parent.g
-    k = rand(rng, 1:node_count(parent))
-    _, depth = _node_at(g.nodes, parent.i, k)
-    budget = Int(max_depth) - depth
-    replacement = _grow!(g, rand(rng, 0:budget), Int(no_variables), rng, false)
-    return Tree(g, _replace!(g, parent.i, k, replacement))
+    return first(_protected_mutation(parent, no_variables, max_depth, rng, false))
 end
 
 # ---------------------------------------------------------------------------
@@ -759,6 +796,7 @@ Base.@kwdef struct GPOptions
     fold_constants::Bool = true  # plegado de constantes (--no-fold lo apaga)
     early_cut::Bool = true       # corte temprano exacto (--no-cut lo apaga)
     order_by_parent::Bool = true # evaluar primero los hijos de mejores padres (--no-order lo apaga)
+    skip_duplicates::Bool = true # un hijo identico a su padre recibe su MSE sin evaluarse (--no-dup)
 end
 
 struct GPResult
@@ -806,6 +844,16 @@ function _score_child!(heap::Vector{Float64}, t::Tree, data::Dataset, S::Int, ha
                        early_cut::Bool)
     cut = (early_cut && length(heap) == half) ? @inbounds(heap[1]) : Inf
     s = fitness(t, data, S; cut=cut)
+    _record_best!(heap, s, half)
+    return s
+end
+
+# Hijo que es copia exacta de un padre: su MSE es el del padre, sin evaluar las filas. Se
+# registra igual que si se hubiera evaluado: con el corte temprano, fitness habria devuelto
+# +Inf justo cuando el MSE pasa del corte.
+function _score_copy!(heap::Vector{Float64}, parent_mse::Float64, half::Int, early_cut::Bool)
+    cut = (early_cut && length(heap) == half) ? @inbounds(heap[1]) : Inf
+    s = parent_mse > cut ? Inf : parent_mse
     _record_best!(heap, s, half)
     return s
 end
@@ -888,6 +936,8 @@ function full_gp(data::Dataset, options::GPOptions)
     children = Vector{Int32}(undef, N)        # hijos en orden de creacion
     parent_score = Vector{Float64}(undef, N)  # MSE del padre del que hereda la raiz
     child_score = Vector{Float64}(undef, N)
+    copy_score = Vector{Float64}(undef, N)    # MSE del padre si el hijo es su copia (NaN = evaluar)
+    detect = options.skip_duplicates
     evaluation_order = Vector{Int}(undef, N)
     for generation in 0:options.generations
         push!(history, minimum(_score, population))
@@ -911,20 +961,26 @@ function full_gp(data::Dataset, options::GPOptions)
         for _ in 1:(N ÷ 4)  # N/2 hijos por crossover
             j1 = rand(rng, 1:N)
             j2 = rand(rng, 1:N)
-            c1, c2 = depth_protected_crossover(Tree(g, pool[j1]), Tree(g, pool[j2]), max_depth, rng)
+            c1, c2, copied = _protected_crossover(Tree(g, pool[j1]), Tree(g, pool[j2]), max_depth,
+                                                  rng, detect)
             k += 1
             children[k] = c1.i
             parent_score[k] = pool_score[j1]  # c1 conserva la raiz de p1
+            copy_score[k] = copied == COPY_PARENTS ? pool_score[j1] :
+                            copied == COPY_SWAPPED ? pool_score[j2] : NaN
             k += 1
             children[k] = c2.i
             parent_score[k] = pool_score[j2]
+            copy_score[k] = copied == COPY_PARENTS ? pool_score[j2] :
+                            copied == COPY_SWAPPED ? pool_score[j1] : NaN
         end
         for _ in 1:(N ÷ 2)  # N/2 hijos por mutacion
             j = rand(rng, 1:N)
-            m = depth_protected_mutation(Tree(g, pool[j]), nvars, max_depth, rng)
+            m, same = _protected_mutation(Tree(g, pool[j]), nvars, max_depth, rng, detect)
             k += 1
             children[k] = m.i
             parent_score[k] = pool_score[j]
+            copy_score[k] = same ? pool_score[j] : NaN
         end
         if options.order_by_parent
             sortperm!(evaluation_order, parent_score; alg=MergeSort)  # estable
@@ -932,7 +988,9 @@ function full_gp(data::Dataset, options::GPOptions)
             evaluation_order .= 1:N  # orden de creacion
         end
         for i in evaluation_order
-            child_score[i] = _score_child!(heap, Tree(g, children[i]), data, S, half, options.early_cut)
+            child_score[i] = isnan(copy_score[i]) ?
+                _score_child!(heap, Tree(g, children[i]), data, S, half, options.early_cut) :
+                _score_copy!(heap, copy_score[i], half, options.early_cut)
         end
         for i in 1:N
             push!(offspring, Individual(child_score[i], children[i]))
@@ -1278,6 +1336,38 @@ function run_tests(; verbose::Bool=false)
     check(_throws(() -> crossover(a, grow_full(3, 2, rng; graph=Graph()), rng)),
           "no se mezclan arboles de grafos distintos")
 
+    # Deteccion de hijos que copian a un padre: mismos hijos (mismo texto), mismo consumo
+    # del generador, y cuando se reporta una copia, el hijo es el padre que dice.
+    let r1 = Xoshiro(11), r2 = Xoshiro(11), copies = 0, ok = true
+        for t in 1:3000
+            p1 = grow_random(1 + t % 4, 2, r1)
+            p2 = grow_random(1 + (t ÷ 4) % 4, 2, r1)
+            q1 = grow_random(1 + t % 4, 2, r2)
+            q2 = grow_random(1 + (t ÷ 4) % 4, 2, r2)
+            c1, c2, copied = _protected_crossover(p1, p2, 4, r1, true)
+            d1, d2 = depth_protected_crossover(q1, q2, 4, r2)
+            ok &= expression(c1, 17) == expression(d1, 17) && expression(c2, 17) == expression(d2, 17)
+            if copied == COPY_PARENTS
+                copies += 1
+                ok &= c1.i == p1.i && c2.i == p2.i
+            elseif copied == COPY_SWAPPED
+                copies += 1
+                ok &= c1.i == p2.i && c2.i == p1.i
+            end
+            m, same = _protected_mutation(p1, 2, 4, r1, true)
+            n = depth_protected_mutation(q1, 2, 4, r2)
+            ok &= expression(m, 17) == expression(n, 17)
+            if same
+                copies += 1
+                ok &= m.i == p1.i
+            end
+        end
+        ok &= rand(r1, UInt64) == rand(r2, UInt64)
+        check(ok && copies > 0, "deteccion de hijos que copian a un padre")
+    end
+    check(!_same_subtree(g.nodes, parse_expression("(x1 + 0)").i, parse_expression("(x1 + -0)").i),
+          "constantes iguales solo con los mismos bits")
+
     # --- GP completo --------------------------------------------------------
     check(_throws(() -> full_gp(exact, GPOptions(generations=-1))), "generaciones negativas rechazadas")
     run = full_gp(exact, GPOptions(population_size=24, max_depth=3, generations=3))
@@ -1299,6 +1389,9 @@ function run_tests(; verbose::Bool=false)
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
                                                     seed=seed, order_by_parent=false))),
               "evaluar primero los hijos de mejores padres no altera el GP")
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, skip_duplicates=false))),
+              "reutilizar el MSE de los hijos que copian a un padre no altera el GP")
         # cache_mb=1 con S=1 fuerza la compactacion del grafo en cada generacion.
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
                                                     seed=seed, cache_mb=1, cache_min_size=1))),

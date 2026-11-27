@@ -14,7 +14,8 @@
 #   -Seeds 5                 semillas (por defecto 5; por ejemplo -Seeds 1,5)
 #   -Generations 100         generaciones del GP completo
 #   -SoloCrossover / -SoloGP correr solo una parte
-#   -SinPendientes           GP sin plegado de constantes ni corte temprano (mismo resultado)
+#   -SinPendientes           GP sin plegado de constantes, corte temprano ni reutilizar el MSE
+#                            de hijos identicos a su padre (mismo resultado)
 #   -ParesEnMemoria -1       -1 = segun la RAM; 0 = 10,000 a la vez; 2500 = 5,000 a la vez
 #   -B ruta\gp_b.exe         ejecutable de B
 #   -Data ruta\dataset.csv   dataset del GP completo
@@ -42,13 +43,13 @@ $exe = (Resolve-Path $B).Path
 $extra = @()
 $pendientes = "activos"
 if ($SinPendientes) {
-    $extra += "--no-fold", "--no-cut"
-    $pendientes = "apagados (--no-fold --no-cut)"
+    $extra += "--no-fold", "--no-cut", "--no-dup"
+    $pendientes = "apagados (--no-fold --no-cut --no-dup)"
 }
 $info = @(
     "Implementacion: B (C++20, convencional, competencia 1: mas rapida convencional)",
     "Ejecutable: $exe (compilado: $((Get-Item $exe).LastWriteTime.ToString('yyyy-MM-dd HH:mm')))",
-    "Plegado de constantes y corte temprano (GP completo): $pendientes"
+    "Plegado, corte temprano y MSE de hijos identicos al padre (GP completo): $pendientes"
 )
 
 Invoke-GPBenchmark -Impl "B" -Exe $exe -Pre @() -Data $Data -Seeds $Seeds `

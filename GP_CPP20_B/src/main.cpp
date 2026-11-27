@@ -25,6 +25,7 @@ struct Args {
     bool fold_constants = true; // --no-fold lo apaga
     bool early_cut = true;      // --no-cut lo apaga
     bool order_by_parent = true; // --no-order lo apaga
+    bool skip_duplicates = true; // --no-dup lo apaga
     std::size_t population = 5000;
     std::size_t generations = 100; // El manual no lo fija; se acordo usar 100.
     std::size_t variables = 2;
@@ -50,6 +51,7 @@ Args parse_args(int argc, char** argv) {
         if (arg == "--no-fold") { opts.fold_constants = false; continue; }
         if (arg == "--no-cut") { opts.early_cut = false; continue; }
         if (arg == "--no-order") { opts.order_by_parent = false; continue; }
+        if (arg == "--no-dup") { opts.skip_duplicates = false; continue; }
         const std::size_t equal = arg.find('=');
         if (equal == std::string::npos) {
             throw std::invalid_argument("Se esperaba --opcion=valor: " + arg);
@@ -93,7 +95,7 @@ void print_help() {
                           [--variables=2] [--seed=5] [--batch-pairs=0]
   gp_b --bench-gp [--data=dataset.csv] [--population=5000]
                   [--depths=7,9,12] [--generations=100] [--seed=5] [--history=archivo.csv]
-                  [--no-fold] [--no-cut] [--no-order]
+                  [--no-fold] [--no-cut] [--no-order] [--no-dup]
   gp_b --eval-file --file=arboles.txt [--data=dataset.csv]
        Lee una expresion por linea e imprime MSE (17 digitos), profundidad,
        nodos y la expresion, separados por tabuladores (para comparar con A y C).
@@ -109,7 +111,8 @@ Por defecto los 10000 padres estan en memoria a la vez (protocolo acordado).
 --batch-pairs=2500 deja 5000 a la vez si no alcanza la RAM.
 --no-fold: no plegar subarboles sin variables. --no-cut: sin corte temprano exacto.
 --no-order: evaluar los hijos en orden de creacion (por defecto, primero los de mejores padres).
-Las tres optimizaciones dan el mismo resultado; se pueden apagar si el profesor no las acepta.
+--no-dup: evaluar tambien los hijos identicos a su padre (por defecto reciben el MSE del padre).
+Las cuatro optimizaciones dan el mismo resultado; se pueden apagar si el profesor no las acepta.
 )";
 }
 
@@ -131,6 +134,7 @@ void run_gp_benchmark(const gp::Dataset& data, const std::vector<int>& depths,
         opts.fold_constants = args.fold_constants;
         opts.early_cut = args.early_cut;
         opts.order_by_parent = args.order_by_parent;
+        opts.skip_duplicates = args.skip_duplicates;
         const auto start = std::chrono::steady_clock::now();
         auto result = gp::full_gp(data, opts);
         const auto stop = std::chrono::steady_clock::now();

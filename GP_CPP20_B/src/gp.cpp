@@ -351,6 +351,23 @@ double mse_impl(const Node& root, const Dataset& data, bool fold, double cut) {
     return sum / rows;
 }
 
+// Dos subarboles son iguales si tienen la misma forma, los mismos operadores, las mismas
+// variables y constantes con los MISMOS bits (asi dan el mismo valor en cada fila).
+bool equal_trees(const Node& a, const Node& b) noexcept {
+    if (a.kind != b.kind) return false;
+    if (a.kind == Kind::Constant) return std::memcmp(&a.value, &b.value, sizeof a.value) == 0;
+    if (a.kind == Kind::Variable) return a.variable_index == b.variable_index;
+    if (!equal_trees(*a.left, *b.left)) return false;
+    return !a.right || equal_trees(*a.right, *b.right);
+}
+
+// Que hijo de un operador protegido es copia exacta de un padre (mismo arbol => mismo MSE).
+enum class Copy : unsigned char {
+    None,     // hijo(s) nuevo(s)
+    Parents,  // hijo a = padre a, hijo b = padre b (se intercambiaron subarboles iguales)
+    Swapped   // hijo a = padre b, hijo b = padre a (se intercambiaron las raices)
+};
+
 struct Individual {
     Tree tree;
     double score;
@@ -540,8 +557,10 @@ Tree mutation(const Node& parent, std::size_t variable_count,
     return result;
 }
 
-std::pair<Tree, Tree> depth_protected_crossover(
-    const Node& a, const Node& b, int max_depth, std::mt19937_64& rng) {
+namespace {
+std::pair<Tree, Tree> protected_crossover_impl(const Node& a, const Node& b, int max_depth,
+                                               std::mt19937_64& rng, Copy* copy) {
+    if (copy) *copy = Copy::None;
     ensure_depth_argument(max_depth);
     thread_local std::vector<ShapedSlot> slots_a;
     thread_local std::vector<ShapedSlot> slots_b;
@@ -564,17 +583,23 @@ std::pair<Tree, Tree> depth_protected_crossover(
         const ShapedSlot& x = slots_a[random_integer<std::size_t>(rng, 0, slots_a.size() - 1)];
         const ShapedSlot& y = slots_b[random_integer<std::size_t>(rng, 0, slots_b.size() - 1)];
         if (x.depth + y.height <= max_depth && y.depth + x.height <= max_depth) {
+            if (copy) {  // solo compara; no consume el generador ni cambia los hijos
+                if (x.depth == 0 && y.depth == 0) *copy = Copy::Swapped;
+                else if (equal_trees(**x.slot, **y.slot)) *copy = Copy::Parents;
+            }
             std::swap(*x.slot, *y.slot);
             return {std::move(child_a), std::move(child_b)};
         }
     }
     // Intercambiar las raices completas siempre respeta el limite de ambos padres.
+    if (copy) *copy = Copy::Swapped;
     std::swap(child_a, child_b);
     return {std::move(child_a), std::move(child_b)};
 }
 
-Tree depth_protected_mutation(const Node& parent, std::size_t variable_count,
-                              int max_depth, std::mt19937_64& rng) {
+Tree protected_mutation_impl(const Node& parent, std::size_t variable_count, int max_depth,
+                             std::mt19937_64& rng, bool* same) {
+    if (same) *same = false;
     ensure_depth_argument(max_depth);
     thread_local std::vector<ShapedSlot> slots;
     slots.clear();
@@ -585,8 +610,21 @@ Tree depth_protected_mutation(const Node& parent, std::size_t variable_count,
     const ShapedSlot& selected = slots[random_integer<std::size_t>(rng, 0, slots.size() - 1)];
     const int remaining = max_depth - selected.depth;
     const int replacement_depth = random_integer<int>(rng, 0, remaining);
-    *selected.slot = grow_random(replacement_depth, variable_count, rng);
+    Tree replacement = grow_random(replacement_depth, variable_count, rng);
+    if (same) *same = equal_trees(*replacement, **selected.slot);
+    *selected.slot = std::move(replacement);
     return result;
+}
+} // namespace
+
+std::pair<Tree, Tree> depth_protected_crossover(
+    const Node& a, const Node& b, int max_depth, std::mt19937_64& rng) {
+    return protected_crossover_impl(a, b, max_depth, rng, nullptr);
+}
+
+Tree depth_protected_mutation(const Node& parent, std::size_t variable_count,
+                              int max_depth, std::mt19937_64& rng) {
+    return protected_mutation_impl(parent, variable_count, max_depth, rng, nullptr);
 }
 
 GPResult full_gp(const Dataset& data, const GPOptions& options) {
@@ -637,12 +675,8 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
         // orden estable de abajo, el GP da exactamente el mismo resultado con o sin corte.
         std::vector<double> best_half;
         best_half.reserve(N / 2);
-        const auto score_child = [&](const Node& tree) {
+        const auto record = [&](double score) {
             const bool full_heap = best_half.size() == N / 2;
-            const double cut = (options.early_cut && full_heap)
-                                   ? best_half.front()
-                                   : std::numeric_limits<double>::infinity();
-            const double score = mse_impl(tree, data, options.fold_constants, cut);
             if (!full_heap) {
                 best_half.push_back(score);
                 std::push_heap(best_half.begin(), best_half.end());
@@ -653,6 +687,21 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
             }
             return score;
         };
+        const auto cut_now = [&]() {
+            return (options.early_cut && best_half.size() == N / 2)
+                       ? best_half.front()
+                       : std::numeric_limits<double>::infinity();
+        };
+        const auto score_child = [&](const Node& tree) {
+            return record(mse_impl(tree, data, options.fold_constants, cut_now()));
+        };
+        // Hijo que es copia exacta de un padre (--no-dup lo apaga): su MSE es el del padre,
+        // sin evaluar las filas. Se registra igual que si se hubiera evaluado: con el corte
+        // temprano, mse_impl habria devuelto +infinito justo cuando el MSE pasa del corte.
+        const auto score_copy = [&](double parent_mse) {
+            return record(parent_mse > cut_now() ? std::numeric_limits<double>::infinity()
+                                                 : parent_mse);
+        };
 
         // Primero se CREAN todos los hijos (mismo orden y mismo consumo del generador que
         // antes) y despues se evaluan empezando por los de mejores padres: el umbral del
@@ -660,23 +709,37 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
         // MSE de los sobrevivientes ni el orden de creacion (que decide los empates).
         std::vector<double> parent_score;
         parent_score.reserve(N);
+        // MSE conocido de los hijos que son copia exacta de un padre (NaN = hay que evaluar).
+        std::vector<double> copy_score;
+        copy_score.reserve(N);
+        const double unknown = std::numeric_limits<double>::quiet_NaN();
+        Copy copy = Copy::None;
+        bool same = false;
+        Copy* const copy_out = options.skip_duplicates ? &copy : nullptr;
+        bool* const same_out = options.skip_duplicates ? &same : nullptr;
         // N/4 cruces x 2 hijos = N/2 descendientes por crossover.
         for (std::size_t i = 0; i < N / 4; ++i) {
             const Individual& p1 = pick_parent(); // orden explicito de seleccion
             const Individual& p2 = pick_parent();
-            auto [a, b] = depth_protected_crossover(*p1.tree, *p2.tree, options.max_depth, rng);
+            auto [a, b] = protected_crossover_impl(*p1.tree, *p2.tree, options.max_depth, rng,
+                                                   copy_out);
             offspring.push_back({std::move(a), 0.0});
             offspring.push_back({std::move(b), 0.0});
             parent_score.push_back(p1.score);  // el hijo a conserva la raiz de p1
             parent_score.push_back(p2.score);
+            copy_score.push_back(copy == Copy::Parents ? p1.score
+                                 : copy == Copy::Swapped ? p2.score : unknown);
+            copy_score.push_back(copy == Copy::Parents ? p2.score
+                                 : copy == Copy::Swapped ? p1.score : unknown);
         }
         // N/2 descendientes por mutacion = 50% del total.
         for (std::size_t i = 0; i < N / 2; ++i) {
             const Individual& p = pick_parent();
-            Tree mutated = depth_protected_mutation(*p.tree, data.variables(),
-                                                     options.max_depth, rng);
+            Tree mutated = protected_mutation_impl(*p.tree, data.variables(), options.max_depth,
+                                                   rng, same_out);
             offspring.push_back({std::move(mutated), 0.0});
             parent_score.push_back(p.score);
+            copy_score.push_back(same ? p.score : unknown);
         }
         std::vector<std::size_t> evaluation_order(offspring.size());
         std::iota(evaluation_order.begin(), evaluation_order.end(), std::size_t{0});
@@ -684,7 +747,10 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
             std::stable_sort(evaluation_order.begin(), evaluation_order.end(),
                              [&](std::size_t i, std::size_t j) { return parent_score[i] < parent_score[j]; });
         }
-        for (const std::size_t i : evaluation_order) offspring[i].score = score_child(*offspring[i].tree);
+        for (const std::size_t i : evaluation_order) {
+            offspring[i].score = std::isnan(copy_score[i]) ? score_child(*offspring[i].tree)
+                                                           : score_copy(copy_score[i]);
+        }
 
         // Orden ESTABLE (como A y C): en empates conserva el orden de creacion. Con
         // nth_element el orden de los sobrevivientes dependia de la implementacion de la
@@ -920,6 +986,44 @@ void run_tests() {
         check(same, "grow en preorden: mismos arboles y mismo consumo del generador");
     }
 
+    // Deteccion de hijos que copian a un padre: mismos hijos, mismo consumo del generador,
+    // y cuando se reporta una copia, el hijo es identico al padre que dice.
+    {
+        std::mt19937_64 r_flag(11);
+        std::mt19937_64 r_plain(11);
+        int copies = 0;
+        bool ok = true;
+        for (int t = 0; t < 3000 && ok; ++t) {
+            Tree p1 = grow_random(1 + t % 4, 2, r_flag);
+            Tree p2 = grow_random(1 + (t / 4) % 4, 2, r_flag);
+            Tree q1 = grow_random(1 + t % 4, 2, r_plain);
+            Tree q2 = grow_random(1 + (t / 4) % 4, 2, r_plain);
+            Copy copy = Copy::None;
+            auto [c1, c2] = protected_crossover_impl(*p1, *p2, 4, r_flag, &copy);
+            auto [d1, d2] = depth_protected_crossover(*q1, *q2, 4, r_plain);
+            ok &= c1->expression(17) == d1->expression(17) && c2->expression(17) == d2->expression(17);
+            if (copy == Copy::Parents) {
+                ++copies;
+                ok &= equal_trees(*c1, *p1) && equal_trees(*c2, *p2);
+            } else if (copy == Copy::Swapped) {
+                ++copies;
+                ok &= equal_trees(*c1, *p2) && equal_trees(*c2, *p1);
+            }
+            bool same = false;
+            Tree m = protected_mutation_impl(*p1, 2, 4, r_flag, &same);
+            Tree n = depth_protected_mutation(*q1, 2, 4, r_plain);
+            ok &= m->expression(17) == n->expression(17);
+            if (same) {
+                ++copies;
+                ok &= equal_trees(*m, *p1);
+            }
+        }
+        ok &= r_flag() == r_plain();
+        check(ok && copies > 0, "deteccion de hijos que copian a un padre");
+        check(!equal_trees(*parse_expression("(x1 + 0)"), *parse_expression("(x1 + -0)")),
+              "constantes iguales solo con los mismos bits");
+    }
+
     // El corte temprano, el plegado y el orden de evaluacion no cambian el GP.
     for (std::uint64_t seed : {1u, 2u, 3u}) {
         GPOptions o;
@@ -931,14 +1035,26 @@ void run_tests() {
         plain.early_cut = false;
         plain.fold_constants = false;
         plain.order_by_parent = false;
+        plain.skip_duplicates = false;
         GPOptions creation_order = o;
         creation_order.order_by_parent = false;
+        GPOptions evaluate_copies = o;
+        evaluate_copies.skip_duplicates = false;
+        GPResult with_copies = full_gp(hard, evaluate_copies);
         GPResult fast = full_gp(hard, o);
         GPResult slow = full_gp(hard, plain);
         GPResult unordered = full_gp(hard, creation_order);
         bool same_order = unordered.best_fitness_per_generation == fast.best_fitness_per_generation
                           && unordered.best->expression(17) == fast.best->expression(17);
         check(same_order, "evaluar primero los hijos de mejores padres: mismo GP");
+        bool same_copies = with_copies.best_fitness_per_generation.size() ==
+                           fast.best_fitness_per_generation.size();
+        for (std::size_t i = 0; same_copies && i < fast.best_fitness_per_generation.size(); ++i) {
+            same_copies = same_bits(fast.best_fitness_per_generation[i],
+                                    with_copies.best_fitness_per_generation[i]);
+        }
+        check(same_copies && with_copies.best->expression(17) == fast.best->expression(17),
+              "reutilizar el MSE de los hijos que copian a un padre: mismo GP");
         bool same = fast.best_fitness_per_generation.size() == slow.best_fitness_per_generation.size();
         for (std::size_t i = 0; same && i < fast.best_fitness_per_generation.size(); ++i) {
             same = same_bits(fast.best_fitness_per_generation[i], slow.best_fitness_per_generation[i]);

@@ -20,9 +20,10 @@
 #                              -1 (por defecto) = elegir segun la RAM: B necesita ~7 GB con
 #                              10,000 arboles de profundidad 15, asi que con menos de 12 GB usa 2500.
 #   -Julia "julia"             ejecutable de Julia
-#   -SinPendientes             GP completo sin plegado de constantes ni corte temprano
-#                              (--no-fold --no-cut en B y C). Mismo resultado; usarlo si el
-#                              profesor no acepta esas dos optimizaciones.
+#   -SinPendientes             GP completo sin plegado de constantes, corte temprano ni MSE
+#                              reutilizado de hijos identicos al padre (--no-fold --no-cut
+#                              --no-dup en B y C). Mismo resultado; usarlo si el profesor no
+#                              acepta esas optimizaciones.
 #
 # Regla confirmada: sin paralelismo. Todo corre en un solo hilo.
 #
@@ -107,7 +108,7 @@ $ram = [math]::Round($ramGB, 1)
 $juliaVersion = & $Julia --version
 # Sin comillas dobles dentro de -e: Windows PowerShell 5.1 las altera al pasarlas a Julia.
 $juliaThreads = (& $Julia @JuliaFlags -e 'println(Threads.nthreads()); println(Threads.ngcthreads())') -join " / "
-$pendientes = if ($SinPendientes) { "apagados (--no-fold --no-cut)" } else { "activos" }
+$pendientes = if ($SinPendientes) { "apagados (--no-fold --no-cut --no-dup)" } else { "activos" }
 @(
     "Fecha: $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
     "CPU: $($cpu.Name)",
@@ -116,7 +117,7 @@ $pendientes = if ($SinPendientes) { "apagados (--no-fold --no-cut)" } else { "ac
     "Windows: $((Get-CimInstance Win32_OperatingSystem).Caption)",
     "Julia: $juliaVersion (opciones: $($JuliaFlags -join ' '))",
     "Julia hilos (computo / recolector de basura): $juliaThreads",
-    "Plegado de constantes y corte temprano (GP completo): $pendientes",
+    "Plegado, corte temprano y MSE de hijos identicos al padre (GP completo): $pendientes",
     "Semillas: $($Seeds -join ',')",
     "Generaciones: $Generations",
     "Profundidades del GP: $($GPDepths -join ', ') (un proceso por profundidad)",
@@ -163,7 +164,7 @@ if (-not $SoloCrossover) {
         foreach ($d in $GPDepths) {
             $common = @("--bench-gp", "--data=$Data", "--population=5000", "--depths=$d",
                         "--generations=$Generations", "--seed=$s")
-            $extra = if ($SinPendientes) { @("--no-fold", "--no-cut") } else { @() }
+            $extra = if ($SinPendientes) { @("--no-fold", "--no-cut", "--no-dup") } else { @() }
             Invoke-GP "B" $B ($common + $extra) $s
             Invoke-GP "C" $Julia ($JuliaFlags + $CMain + $common + $extra) $s
             if ($IncluirA) { Invoke-GP "A" $Julia ($JuliaFlags + $AMain + $common) $s }

@@ -127,6 +127,16 @@ empates: el GP es identico (lo comprueba `--test` y `tools/cross_check.jl` contr
 En B, con `dataset3a.csv`, ahorro entre 5% y 6.6% del tiempo del GP completo; en C falta
 medirlo (`julia main.jl --bench-gp ... --no-order` da la version anterior).
 
+### 8. Hijos identicos a su padre (`--no-dup` lo apaga)
+
+Igual que en B: un crossover que intercambia dos subarboles iguales, una mutacion que pone
+un subarbol igual al que quita o el intercambio de raices producen un hijo **identico a su
+padre**. En C se detecta al crear el hijo (se comparan los dos subarboles; casi siempre son
+hojas) y el hijo es el padre mismo: no se copia el camino ni se evaluan las filas, y recibe
+el MSE del padre. Con el corte temprano se registra igual que si se hubiera evaluado, asi
+que el GP es identico (lo comprueba `--test`). En B, entre 6% y 15% de los hijos son
+copias y el GP tarda de 7% a 12% menos; en C falta medirlo.
+
 ### Resultado medido (mismo resultado, menos tiempo)
 
 Contenedor Linux, Julia 1.13.4 `-O3`, un hilo, `data/ejemplo.csv`, mediana de 3 semillas;
@@ -180,11 +190,13 @@ julia --startup-file=no -O3 main.jl --bench-gp --data=..\datos\dataset3a.csv --p
 | `--cache-min-size=K` | Tamano minimo de subarbol que guarda cache (0 = automatico) |
 | `--no-fold` | Sin plegado de constantes (mismo resultado) |
 | `--no-cut` | Sin corte temprano exacto (mismo resultado) |
+| `--no-order` | Evaluar los hijos en orden de creacion (mismo resultado) |
+| `--no-dup` | Evaluar tambien los hijos identicos a su padre (mismo resultado) |
 | `--eval-file --file=arboles.txt --data=...` | Lee expresiones (una por linea) e imprime MSE con 17 digitos, profundidad y nodos |
 | `--export-trees --count=N --depth=D --variables=V --seed=S [--full]` | Escribe arboles sin perdida (17 digitos) |
 
-`--no-fold` y `--no-cut` existen porque esas dos optimizaciones estaban pendientes de
-confirmar con el profesor. Si no las acepta, se apagan sin cambiar el resultado.
+`--no-fold`, `--no-cut` y `--no-dup` existen porque esas optimizaciones estaban pendientes
+de confirmar con el profesor. Si no las acepta, se apagan sin cambiar el resultado.
 
 Los benchmarks hacen primero una corrida pequena de calentamiento, para que **la
 compilacion JIT de Julia no se cuente en el tiempo**.

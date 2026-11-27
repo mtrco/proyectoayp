@@ -70,8 +70,8 @@ que el docente debe proporcionar. Formato: `x1,x2,...,y` (ultima columna la sali
 `--history=archivo.csv` escribe `depth,generation,best_mse` (MSE con 17 digitos) despues
 de detener el cronometro; la generacion 0 es la poblacion inicial.
 
-Para medir sin las dos optimizaciones pendientes de confirmar (mismo resultado):
-`--no-fold --no-cut`.
+Para medir sin las optimizaciones pendientes de confirmar (mismo resultado):
+`--no-fold --no-cut --no-dup`.
 
 El manual **no establece el numero de generaciones**; se acordo usar **100** (valor por
 defecto de `--generations` en A, B y C). El dataset oficial es `datos/dataset3a.csv`.
@@ -281,6 +281,25 @@ sin plegado (`--no-fold`) +25%; sin corte (`--no-cut`) +5% a +8%; division solo 
 division +4% a +7% (con g++; con MSVC puede ser distinto, ver la revision); `switch` en
 lugar de la evaluacion sin saltos +4% a +12%; PGO de g++ mas lento.
 
+## Hijos identicos a su padre (resultados identicos; `--no-dup` lo apaga)
+
+Entre 6% y 15% de los hijos son **identicos a su padre**: un crossover que intercambia dos
+subarboles iguales (por ejemplo, la hoja `x1` por la hoja `x1`), una mutacion que pone un
+subarbol igual al que quita, o el intercambio de raices. Mismo arbol => mismo MSE, asi que
+el hijo recibe el MSE del padre sin evaluar las 961 filas. Detectarlo cuesta casi nada: al
+crear el hijo se compara el subarbol que sale con el que entra (casi siempre una hoja). Las
+constantes solo cuentan como iguales si tienen los mismos bits. Idea tomada de la deteccion
+de duplicados de Operon (Burlacu, hash de Zobrist), en version minima: solo copias del padre.
+
+Con el corte temprano el hijo se registra igual que si se hubiera evaluado (+infinito si
+su MSE pasa del umbral), asi que el GP es exactamente el mismo con y sin `--no-dup`.
+
+- **Verificado:** `--test` (3,000 cruces y mutaciones: mismos hijos, mismo consumo del
+  generador y cada copia reportada es identica a su padre; el GP igual con y sin `--no-dup`).
+- **Medido** con `dataset3a.csv`, poblacion 5000, profundidad 7, 40 generaciones, semilla 5,
+  g++ 13 `-O2`, Linux: 24.3 / 24.1 s contra 26.1 / 27.3 s con `--no-dup` (7% a 12% menos),
+  mismo MSE (0.296032601).
+
 ## Validacion de entradas (no afecta el tiempo medido)
 
 - Los argumentos numericos de la linea de comandos deben ser enteros no negativos
@@ -302,5 +321,6 @@ lugar de la evaluacion sin saltos +4% a +12%; PGO de g++ mas lento.
    la RAM baja de unos 7 GB a unos 4.8 GB.
 8. Pendientes de confirmar con el profesor: PGO de MSVC y compilar con clang-cl.
    El plegado de subarboles constantes y el corte temprano del MSE ya estan hechos y
-   activos por defecto; si el profesor no los acepta, `--no-fold --no-cut` los apagan
-   (el resultado es el mismo, solo cambia el tiempo).
+   activos por defecto, igual que reutilizar el MSE de los hijos identicos a su padre; si el
+   profesor no los acepta, `--no-fold --no-cut --no-dup` los apagan (el resultado es el
+   mismo, solo cambia el tiempo).
