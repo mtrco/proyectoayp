@@ -79,6 +79,12 @@ fue: unos 0.04 ms por linea en una terminal de Linux). `--quiet` las apaga.
 Para medir sin las optimizaciones pendientes de confirmar (mismo resultado):
 `--no-fold --no-cut --no-dup`.
 
+**Semilla:** sin `--seed`, B elige una al azar (de 1 a 999,999) y la imprime por stderr
+(`Semilla aleatoria: 386547 (para repetir esta corrida: --seed=386547)`), asi que cada
+corrida es distinta pero siempre se puede repetir. Con `--seed=S` la corrida es exactamente
+la misma cada vez. Los scripts de benchmark siempre pasan una (5 por defecto), para que los
+tiempos y el MSE se puedan comparar.
+
 El manual **no establece el numero de generaciones**; se acordo usar **100** (valor por
 defecto de `--generations` en A, B y C). El dataset oficial es `datos/dataset3a.csv`.
 

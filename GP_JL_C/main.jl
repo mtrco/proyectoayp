@@ -15,33 +15,45 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
   julia main.jl --test [-v]
   julia main.jl --demo [--data=data/ejemplo.csv]
   julia main.jl --bench-crossover [--trees=10000] [--depths=7,9,10,12,15] [--variables=2]
-                                  [--seed=5] [--batch-pairs=0]
+                                  [--seed=S] [--batch-pairs=0]
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000] [--depths=7,9,12]
-                           [--generations=100] [--seed=5] [--history=archivo.csv]
-                           [--cache-mb=1024] [--cache-min-size=0] [--no-fold] [--no-cut] [--no-order]
-                           [--no-dup] [--quiet]
+                           [--generations=100] [--seed=S] [--history=archivo.csv]
+                           [--cache-mb=1024] [--cache-min-size=0] [--reuse-min-size=4] [--no-tape]
+                           [--no-batch] [--no-fold] [--no-cut] [--no-order] [--no-dup] [--quiet]
   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
-  julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=5] [--full]
+  julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=S] [--full]
 
 --batch-pairs:    parejas de padres en memoria a la vez en el benchmark de crossover
                   (0 = los 10000 arboles a la vez, protocolo acordado; 2500 = 5000).
 --cache-mb:       presupuesto aproximado del cache de resultados del GP (0 = sin cache).
 --cache-min-size: tamano minimo de subarbol que guarda cache (0 = automatico segun --cache-mb).
+--reuse-min-size: los subarboles de este tamano o mas (y menores que el de --cache-min-size)
+                  guardan cache la segunda vez que se evaluan, es decir, solo si se reusan
+                  (4 por defecto; 0 = no).
+--no-tape:        evaluar recorriendo el arbol en cada fila (recursion) en vez de traducirlo
+                  antes a una lista postfija.
+--no-batch:       recorrer la lista postfija fila por fila. Por defecto se recorre por bloques
+                  de 64 filas (evaluacion por lotes, como B). Con --no-tape no hay lista y
+                  siempre es fila por fila. No tiene que ver con --batch-pairs.
 --history:        archivo CSV con el mejor MSE de cada generacion (depth,generation,best_mse,
                   17 digitos), escrito fuera del cronometro. La generacion 0 es la poblacion inicial.
 --quiet:          no mostrar en vivo (por stderr) el mejor MSE de cada generacion. Sin --quiet,
                   stdout queda como CSV y el tiempo de imprimir esas lineas se descuenta del cronometro.
 --generations:    100 por defecto (el manual no lo fija; se acordo usar 100).
+--seed:           semilla del generador aleatorio. Sin --seed se elige una al azar y se
+                  imprime (por stderr) para poder repetir la corrida con --seed=S.
+                  Los scripts de benchmark siempre pasan una (5 por defecto).
 --no-fold:        no plegar los subarboles sin variables.
 --no-cut:         sin corte temprano exacto de los hijos que no pueden sobrevivir.
 --no-order:       evaluar los hijos en orden de creacion (por defecto, primero los de mejores padres).
 --no-dup:         evaluar tambien los hijos identicos a su padre (por defecto reciben el MSE del padre).
-                  Las cuatro optimizaciones dan el mismo resultado; se apagan si el profesor no las acepta.
+                  Todas estas optimizaciones dan el mismo resultado; se apagan si el profesor no las acepta.
 """
 
 const INT_OPTIONS = Set(["trees", "population", "generations", "variables", "seed",
-                         "batch-pairs", "count", "depth", "cache-mb", "cache-min-size"])
+                         "batch-pairs", "count", "depth", "cache-mb", "cache-min-size",
+                         "reuse-min-size"])
 const STRING_OPTIONS = Set(["data", "depths", "file", "history"])
 
 function parse_args(args)
@@ -50,8 +62,9 @@ function parse_args(args)
         "data" => joinpath(@__DIR__, "data", "ejemplo.csv"), "depths" => "", "file" => "",
         "history" => "",
         "trees" => 10000, "population" => 5000, "generations" => 100, "variables" => 2,
-        "seed" => 5, "batch-pairs" => 0, "count" => 100, "depth" => 5,
-        "cache-mb" => 1024, "cache-min-size" => 0, "full" => false, "verbose" => false,
+        "seed" => -1, "batch-pairs" => 0, "count" => 100, "depth" => 5,
+        "cache-mb" => 1024, "cache-min-size" => 0, "reuse-min-size" => 4, "tape" => true, "batch" => true,
+        "full" => false, "verbose" => false,
         "fold" => true, "cut" => true, "order" => true, "dup" => true, "quiet" => false)
     for arg in args[2:end]
         if arg == "--full"
@@ -64,6 +77,10 @@ function parse_args(args)
             o["order"] = false
         elseif arg == "--no-dup"
             o["dup"] = false
+        elseif arg == "--no-tape"
+            o["tape"] = false
+        elseif arg == "--no-batch"
+            o["batch"] = false
         elseif arg == "-v"
             o["verbose"] = true
         elseif arg == "--quiet"
@@ -109,8 +126,20 @@ function (p::Progress)(generation::Int, best::Float64)
     return nothing
 end
 
+# Sin --seed, una semilla al azar (de 1 a 999,999, facil de copiar). Se imprime por stderr
+# para no mezclarla con el CSV de stdout y poder repetir la corrida con --seed=S.
+function resolve_seed!(o)
+    if o["seed"] < 0
+        o["seed"] = rand(RandomDevice(), 1:999_999)
+        println(stderr, "Semilla aleatoria: ", o["seed"], " (para repetir esta corrida: --seed=",
+                o["seed"], ")")
+    end
+    return o["seed"]
+end
+
 function main(args)
     mode, o = parse_args(args)
+    mode in ("--demo", "--bench-crossover", "--bench-gp", "--export-trees") && resolve_seed!(o)
     if mode in ("--help", "-h")
         print(HELP)
     elseif mode == "--test"
@@ -140,9 +169,14 @@ function main(args)
         end
     elseif mode == "--bench-gp"
         data = read_csv(o["data"])
-        # Calentamiento (JIT), tambien de la impresion del avance.
-        full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1,
-                                on_generation=Progress(devnull, 3, 1, time_ns(), 0)))
+        # Calentamiento (JIT), con las opciones de la corrida y tambien de la impresion del
+        # avance; la segunda corrida compila la evaluacion recursiva, que con la lista
+        # postfija se usa en los arboles grandes (la poblacion inicial en profundidad 12).
+        for tape in (o["tape"], false)
+            full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1, tape=tape,
+                                    reuse_min_size=o["reuse-min-size"], batch=o["batch"],
+                                    on_generation=Progress(devnull, 3, 1, time_ns(), 0)))
+        end
         # Mejor MSE de cada generacion (0 = poblacion inicial), escrito fuera del cronometro.
         history = isempty(o["history"]) ? nothing : open(o["history"], "w")
         history === nothing || println(history, "depth,generation,best_mse")
@@ -154,7 +188,8 @@ function main(args)
                                 cache_mb=o["cache-mb"], cache_min_size=o["cache-min-size"],
                                 fold_constants=o["fold"], early_cut=o["cut"],
                                 order_by_parent=o["order"], skip_duplicates=o["dup"],
-                                on_generation=progress)
+                                tape=o["tape"], reuse_min_size=o["reuse-min-size"],
+                                batch=o["batch"], on_generation=progress)
             GC.gc()  # memoria de la corrida anterior, fuera del cronometro
             t0 = time_ns()
             progress === nothing || (progress.start = t0)

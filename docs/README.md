@@ -136,7 +136,8 @@ se parecen muchísimo a sus padres**, y por eso el cache de C funciona tan bien.
 - N debe ser múltiplo de 4: N/4 crossovers dan N/2 hijos y N/2 mutaciones dan los otros N/2.
 - Población inicial: 100% `grow_full`. Benchmark: N = 5,000, profundidades 7, 9 y 12
   (cada una en un comando aparte), 100 generaciones (el manual no las fija; se acordó 100),
-  semilla 5 por defecto, reportando el mejor MSE de cada generación (`--history`). Las
+  semilla 5 en los scripts de benchmark, reportando el mejor MSE de cada generación (`--history`).
+  Sin `--seed`, B y C eligen una semilla al azar y la imprimen (A usa 5). Las
   mediciones de la sección 7.1 son de una versión anterior y usan 10 generaciones; las de
   la sección 7.2 usan el protocolo actual.
 - Reemplazo con **orden estable**: en un empate de MSE gana el que llegó primero. Las tres
@@ -203,7 +204,9 @@ cambiar la representación clásica.
 **Toda la población vive en un solo grafo dentro de un arreglo** (aprobado por el
 profesor: "toda la población en un solo grafo con caché de resultados"). Cada nodo es un
 registro de 24 bytes; los hijos son posiciones en el arreglo. Un árbol es solo el número de
-su raíz, y los individuos comparten subárboles.
+su raíz, y los individuos comparten subárboles. Para evaluar, cada árbol se traduce una vez
+a una lista postfija (C12) que se recorre por bloques de 64 filas (C14; fila por fila con
+`--no-batch`).
 
 ![Población en un solo grafo](img/13_grafo.svg)
 
@@ -241,6 +244,9 @@ explica por qué). "Nuevo" = agregado en esta revisión; el resto ya existía.
 | C9 | **Plegado de constantes** | C | trabajo extra | (en el total) | nuevo |
 | C10 | **Corte temprano exacto** | C | trabajo extra | 4-7% de las filas (modelo) | nuevo |
 | C11 | **Compactación del grafo** en corridas largas | C | memoria | memoria acotada | nuevo |
+| C12 | **Lista postfija** (híbrida: hasta 512 instrucciones) | C | recorrer el árbol en cada fila | con C13: 1.8-2.2× del GP (modelo en C++) | nuevo |
+| C13 | **Cache al reusarse** en subárboles chicos (4 ≤ tamaño < S) | C | subárboles chicos recalculados | (con C12) | nuevo |
+| C14 | **Lista postfija por bloques de 64 filas** (evaluación por lotes) | C | decidir cada instrucción en cada fila | 3.5-4.4× sobre C12 + C13 (modelo en C++) | nuevo; **el profesor dijo que no es válida**; `--no-batch` la apaga |
 | A1 | Hijos con una unión concreta de tipos | A, C | despacho dinámico | — | existente |
 | P1 | Calentamiento JIT, liberación fuera del cronómetro | todas | medición justa | — | existente |
 
@@ -496,6 +502,71 @@ se copian a un grafo nuevo solo los árboles vivos (conservando lo que comparten
 cache). En el benchmark (10 generaciones) no llega a ocurrir; `--test` la fuerza y
 comprueba que no cambia el resultado.
 
+### C12. Lista postfija (`_compile!`, `_run_tape`, `_fitness_tape`; `--no-tape` la apaga) — nuevo
+
+En un modelo de C escrito en C++, el 93% del tiempo del GP era evaluar los hijos, y casi
+todo eso era recorrer el árbol: en cada fila, la recursión vuelve a leer el registro de cada
+nodo del camino, revisa su cache y llama a la función del hijo (en el modelo, unos 13 ns por cada nodo del camino y por fila).
+
+- Antes de evaluar, el árbol se traduce **una vez** a postfijo: hijo izquierdo, hijo
+  derecho, operador. Cada instrucción (`TapeOp`, 24 bytes) apila una variable, una
+  constante o el cache de un nodo, aplica un operador o guarda el tope de la pila en el
+  cache de un nodo. Un nodo con cache completo es una sola instrucción: su subárbol ni
+  siquiera se recorre.
+- Después, **para cada fila**, se recorre la lista con una pila: cada fila pasa por todo el
+  árbol antes de empezar la siguiente. Así es con `--no-batch`; por defecto, C14 recorre la
+  lista por bloques de 64 filas.
+- **Híbrido**: con más de 512 instrucciones (`TAPE_MAX`) se usa la recursión. En la
+  población inicial de profundidad 12 hay árboles de miles de nodos sin nada en cache; con
+  listas tan largas el procesador ya no adivina la siguiente instrucción y la lista fue 2.5
+  veces más lenta (91 s contra 37 s en la población inicial del modelo). Los hijos, que leen
+  del cache casi todo lo que comparten, tienen listas cortas.
+- El cache de los nodos grandes solo se reserva si de verdad se usa la lista
+  (`_resolve_stores!`); si el árbol cae en la recursión, la recursión lo llena como antes.
+
+### C13. Cache al reusarse (`--reuse-min-size=K`, 4 por defecto; 0 lo apaga) — nuevo
+
+Con S = 16, un subárbol de 4 a 15 nodos nunca tiene cache, y cada hijo que lo contiene lo
+recalcula en las 961 filas. Bajar S para todos no cabe en memoria (con S = 4 en profundidad
+9 el modelo se quedó sin memoria). En cambio, los nodos con K ≤ tamaño < S guardan cache
+**la segunda vez** que se evalúan; la primera solo se marcan (`SEEN` en `cache_id`). Así
+gastan memoria solo los subárboles chicos que reaparecen. A diferencia del "cache perezoso"
+que se descartó (abajo), los nodos de tamaño ≥ S siguen guardando cache desde la primera vez.
+Solo guarda el subárbol chico **más externo**: los nodos de adentro no guardan, porque la
+próxima vez se lee el de afuera. Sin esa regla, en profundidad 15 (S = 512) cada hijo
+guardaba cientos de subárboles anidados (modelo: 5.9 GB contra 2.0 GB con 2,000 árboles).
+
+| Modelo de C en C++, dataset3a, población 5,000, 100 generaciones | Prof. 7 | Prof. 9 | Prof. 12 |
+|---|---|---|---|
+| Antes | 35.1 s | 53.5 s | 148.4 s |
+| C12 + C13 | 18.3 s | 29.8 s | 66.0 s |
+| Pico de RAM antes / después | 2.3 / 2.3 GB | 2.5 / 2.6 GB | 4.2 / 5.1 GB |
+
+El modelo usa las mismas estructuras y la misma lógica que C (calibrado: 37.5 s contra
+36.6 s de Julia en profundidad 7) pero otro generador aleatorio. Su historial del mejor MSE
+es idéntico con y sin C12 y C13 en las tres profundidades. Falta medirlo en Julia
+(`--no-tape --reuse-min-size=0` da la versión anterior).
+
+### C14. Lista postfija por bloques de filas (`_run_tape_batch!`, `_fitness_tape_batch`; `--no-batch` la apaga) — nuevo
+
+> **El profesor dijo que la evaluación por lotes no es válida para C.** Se agregó y quedó
+> encendida por decisión del equipo; `--no-batch` regresa a fila por fila con el mismo
+> resultado.
+
+La lista de C12 se recorre una vez por bloque de 64 filas en vez de una vez por fila. Cada
+lugar de la pila es una columna de 64 valores: una variable apila su columna (el dataset
+guarda las columnas seguidas, `Dataset.cols`), un nodo con caché apila su tramo y un
+operador combina las dos columnas de arriba. Decidir cada instrucción, lo que dominaba en
+C12, se paga una vez por bloque; por eso no hace falta `TAPE_MAX`. La suma del error sigue
+fila por fila, en el mismo orden y con el mismo corte: el MSE es idéntico bit a bit.
+
+| Modelo de C en C++, dataset3a, población 5,000, 100 generaciones | Prof. 7 | Prof. 9 | Prof. 12 |
+|---|---|---|---|
+| C12 + C13 (lista fila por fila) | 17.4 s | 29.8 s | 66.0 s |
+| C12 + C13 + C14 (por bloques) | 4.7 s | 8.4 s | 15.0 s |
+
+Mismo historial del mejor MSE en las tres profundidades. Falta medirlo en Julia.
+
 ### A1. Hijos con una unión concreta de tipos (A y la versión anterior de C)
 
 `left::Union{NodeInternal, NodeVariable, NodeConstant}` en vez del tipo abstracto `Node`:
@@ -510,10 +581,12 @@ liberar hijos (cada 16 cruces) quedan fuera del cronómetro; un solo hilo.
 
 | Idea | Por qué no |
 |---|---|
-| Evaluación por lotes (todas las filas a la vez por nodo) | **Prohibida** por el profesor |
+| Evaluación por lotes en A | El profesor dijo que no es válida (en C); el equipo la usa en B y en C (C14), no en A |
 | Paralelismo | **Prohibido** por el profesor |
-| Árbol como arreglo postfijo | El profesor no ve beneficio; el costo dominante (saltos) seguiría ahí |
-| Cache "perezoso" (guardar hasta el segundo uso) | Medido en un modelo: mucho peor en prof. 12 (4.8 → 6.2 s) |
+| Lista postfija también en árboles largos | 2.5× más lenta que la recursión con miles de instrucciones (por eso C12 es híbrida) |
+| Cache "perezoso" en todos los nodos (guardar hasta el segundo uso, también los ≥ S) | Medido en un modelo: mucho peor en prof. 12 (4.8 → 6.2 s); C13 lo usa solo en los chicos |
+| Bajar S a 4 para todos los nodos | El cache de la población inicial no cabe en memoria (profundidades 9 y 12) |
+| Reordenar las filas para que el corte temprano llegue antes | Corta pocas filas más y el reordenamiento cuesta: más tiempo en el modelo |
 | Unir subárboles idénticos creados por separado (hash-consing) | Casi no hay repetidos: las constantes son aleatorias |
 | Prefetch manual al clonar; pila de libres en arreglo | Sin ganancia clara medida |
 | Crossover "fusionado" sin lista de puntos de corte en B | Como máximo 15-20%; cambia la estructura del código convencional |
@@ -523,9 +596,8 @@ liberar hijos (cada 16 cruces) quedan fuera del cronómetro; un solo hilo.
 | Evaluar en SIMD varias filas, hilos, GPU | Son evaluación por lotes o paralelismo: prohibidos |
 | Optimizar constantes por búsqueda local; agregar seno | Mejoraría mucho el MSE, pero cambia el algoritmo y los operadores del manual |
 
-**Pendientes de medir o de preguntar al profesor:** evaluar con una pila los subárboles
-contiguos de C (árbol postfijo; el profesor dijo que es válido) y guardar en cache, por
-valor de la variable, los subárboles que dependen de una sola variable (dataset3a es una
+**Pendientes de medir o de preguntar al profesor:** medir C12 y C13 en Julia, y guardar en
+cache, por valor de la variable, los subárboles que dependen de una sola variable (dataset3a es una
 cuadrícula de 31 × 31, así que solo hay 31 valores de x1 y 31 de x2; cerca de la mitad del
 trabajo de evaluar la población inicial está en esos subárboles).
 
@@ -539,7 +611,9 @@ cambia qué operaciones se hacen ni en qué orden se suman las filas:
 
 - la evaluación sin saltos calcula de más, pero **elige** el mismo resultado;
 - el plegado calcula una vez el mismo valor que se calcularía en cada fila;
-- el cache guarda valores, no los cambia;
+- el cache guarda valores, no los cambia (también el que se guarda al reusarse);
+- la lista postfija hace las mismas operaciones, en el mismo orden, que la recursión, y
+  recorrerla por bloques de filas solo cambia cuándo se calcula cada fila, no cómo;
 - el corte temprano solo afecta a hijos que de todos modos se descartan;
 - un hijo idéntico a su padre tiene el mismo MSE que su padre;
 - el orden en que se evalúan los hijos no cambia el MSE de ninguno;
@@ -550,7 +624,7 @@ cambia qué operaciones se hacen ni en qué orden se suman las filas:
 | Comando | Qué comprueba |
 |---|---|
 | `gp_b --test` | Lo anterior, más: MSE idéntico a `Node::eval` en 400 árboles con datos extremos (con y sin plegado, también en hijos de crossover y mutación), plegado, preorden con el mismo consumo del generador, detección de hijos idénticos a su padre (mismos hijos y mismo consumo del generador en 3,000 cruces y mutaciones), y el GP igual con y sin `--no-fold --no-cut --no-order --no-dup` |
-| `julia GP_JL_C/main.jl --test` | 1,582 comprobaciones: registro de 24 bytes, operador sin saltos = con saltos (Inf, NaN, ceros), preorden, plegado, cache con y sin plegado, corte temprano, copia de camino, detección de hijos idénticos a su padre, tamaño automático del cache con 961 filas, y el GP igual con/sin cache, plegado, corte, orden, `--no-dup` y compactación |
+| `julia GP_JL_C/main.jl --test` | 1,582 comprobaciones (1,598 con las de C12 a C14, que falta correr en Julia): registro de 24 bytes, operador sin saltos = con saltos (Inf, NaN, ceros), preorden, plegado, cache con y sin plegado, corte temprano, lista postfija alternada con la recursión (con y sin plegado, varios S y K, otro dataset, corte temprano e hijos), copia de camino, detección de hijos idénticos a su padre, tamaño automático del cache con 961 filas, y el GP igual con/sin cache, plegado, corte, orden, `--no-dup`, lista postfija, cache al reusarse y compactación |
 | `julia GP_JL_A/main.jl --test` | 1,116 comprobaciones de A |
 | `julia GP_JL_C/tools/cross_check.jl` | 56,116 comprobaciones: A y C generan los mismos árboles, los mismos hijos y la misma corrida completa |
 | `julia GP_JL_C/tools/verificar_con_b.jl gp_b` | 3,280 árboles generados por B evaluados por A, B y C: mismo MSE bit a bit |
@@ -696,6 +770,9 @@ julia --startup-file=no -O3 GP_JL_C/main.jl --bench-gp --data=datos/dataset3a.cs
 # Sin las dos optimizaciones pendientes de confirmar con el profesor (mismo resultado)
 ./build/gp_b --bench-gp ... --no-fold --no-cut
 julia GP_JL_C/main.jl --bench-gp ... --no-fold --no-cut
+
+# C sin lista postfija ni cache al reusarse (versión anterior; mismo resultado)
+julia GP_JL_C/main.jl --bench-gp ... --no-tape --reuse-min-size=0
 ```
 
 En Windows, `correr_benchmarks.ps1` hace todo (pruebas, verificación cruzada y

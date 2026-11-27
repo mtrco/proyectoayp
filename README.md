@@ -21,11 +21,16 @@ eficiencia** de B y C, con sus mediciones.
   [`benchmarks/LEEME_benchmarks.txt`](benchmarks/LEEME_benchmarks.txt).
 - `correr_benchmarks.ps1`: las tres implementaciones juntas, con la verificación cruzada
   entre A, B y C antes de medir (Windows).
-- `verificar_cambios.ps1`: compara C contra una copia de respaldo anterior.
+- `verificar_cambios.ps1`: verifica el último cambio de C (lista postfija y cache al
+  reusarse): pruebas y GP completo con y sin el cambio; el MSE de cada generación debe ser igual.
 
 **Optimizaciones que se pueden apagar** (B y C; todas dan exactamente el mismo resultado,
 solo cambian el tiempo): `--no-fold` (plegado de constantes), `--no-cut` (corte temprano
 exacto), `--no-order` (evaluar primero los hijos de mejores padres) y `--no-dup` (hijos
 idénticos a su padre reciben su MSE sin evaluarse). Los scripts de benchmark las apagan
-con `-SinPendientes`. El detalle y las mediciones están en
+con `-SinPendientes`. Solo en C: `--no-tape` (evaluar con la recursión en vez de la lista
+postfija) y `--reuse-min-size=0` (sin cache en los subárboles chicos que se reusan); el
+profesor ya aceptó ambas ideas, así que no entran en `-SinPendientes`. C también recorre
+la lista por bloques de 64 filas (evaluación por lotes, que el profesor dijo que no es
+válida; se dejó por decisión del equipo): `--no-batch` la apaga con el mismo resultado. El detalle y las mediciones están en
 [`docs/README.md`](docs/README.md#5-catálogo-de-técnicas-de-eficiencia).

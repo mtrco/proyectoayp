@@ -4,8 +4,8 @@ Programacion Genetica (GP) - Implementacion C (alternativa, no convencional), Ju
 Idea: TODA la poblacion vive en UN SOLO GRAFO guardado en arreglos, con subarboles
 compartidos y cache de resultados. Ambas cosas las aprobo el profesor ("compartir
 subarboles en vez de copiarlos" y "toda la poblacion en un solo grafo con cache de
-resultados"). La evaluacion por lotes NO esta permitida: se evalua fila por fila, como
-en el manual. No hay paralelismo: un solo hilo.
+resultados"). El profesor dijo que la evaluacion por lotes no es valida; el equipo la usa
+(lista postfija por bloques de filas; --no-batch evalua fila por fila). Un solo hilo.
 
 1. Un grafo en arreglos. Cada nodo es un registro de 24 bytes (`NodeRec`) dentro de un
    `Vector{NodeRec}`; sus hijos son INDICES de 32 bits, no punteros a objetos. Un arbol
@@ -21,7 +21,7 @@ en el manual. No hay paralelismo: un solo hilo.
 3. Copia de camino. Un hijo de crossover o de mutacion crea solo los nodos del camino de
    la raiz al punto de corte (a lo mas uno por nivel); todo lo demas se comparte.
 
-4. Evaluacion fila por fila con cache. Los nodos con tamano >= S guardan su resultado en
+4. Evaluacion con cache. Los nodos con tamano >= S guardan su resultado en
    cada fila en un bloque grande de memoria. Un hijo comparte casi todo con sus padres
    (ya evaluados): solo se calculan los nodos nuevos del camino y los subarboles pequenos
    que cuelgan de el. Debajo de S se usa un evaluador sin cache y sin saltos para elegir
@@ -395,14 +395,20 @@ struct Dataset
     rows::Vector{Vector{Float64}}
     y::Vector{Float64}
     id::Int  # identifica el dataset en el cache de los nodos
+    cols::Matrix{Float64}  # cols[i, j] = x_j de la fila i (para evaluar por bloques)
     function Dataset(rows::AbstractVector, y::AbstractVector)
         (isempty(rows) || length(rows) != length(y)) &&
             throw(ArgumentError("Dataset vacio o inconsistente"))
         width = length(rows[1])
         all(r -> length(r) == width, rows) ||
             throw(ArgumentError("Dimensiones inconsistentes del dataset"))
+        cols = Matrix{Float64}(undef, length(rows), width)
+        for (i, r) in enumerate(rows), j in 1:width
+            cols[i, j] = r[j]
+        end
         DATASET_COUNTER[] += 1
-        return new([Vector{Float64}(r) for r in rows], Vector{Float64}(y), DATASET_COUNTER[])
+        return new([Vector{Float64}(r) for r in rows], Vector{Float64}(y), DATASET_COUNTER[],
+                   cols)
     end
 end
 
@@ -546,16 +552,296 @@ function _abandon_filling!(g::Graph)
     empty!(g.filling)
 end
 
+# ---------------------------------------------------------------------------
+# Evaluacion con lista postfija
+# ---------------------------------------------------------------------------
+# Antes de recorrer las filas, el arbol se traduce UNA vez a una lista lineal de
+# instrucciones en postfijo, y luego esa lista se recorre fila por fila (sigue siendo
+# evaluacion fila por fila, no por lotes). Se ahorran las revisiones que la recursion
+# repite en cada nodo y en cada fila (tamano, cache, tipo de hijo), que en los hijos de una
+# generacion cuestan mas que las operaciones mismas. Mismas operaciones y en el mismo
+# orden que la recursion: el MSE es identico bit a bit.
+const T_VAR = Int32(1)     # apila x[arg]
+const T_CONST = Int32(2)   # apila value
+const T_CACHE = Int32(3)   # apila el cache del nodo: blocks[arg][start + i]
+const T_ADD = Int32(4)
+const T_SUB = Int32(5)
+const T_MUL = Int32(6)
+const T_DIV = Int32(7)
+const T_SQRT = Int32(8)
+const T_STORE = Int32(9)   # guarda el tope en el cache del nodo: blocks[arg][start + i]
+
+"Instruccion de la lista postfija (24 bytes, sin punteros)."
+struct TapeOp
+    code::Int32
+    arg::Int32      # variable (T_VAR) o bloque del cache (T_CACHE, T_STORE)
+    start::Int      # inicio dentro del bloque (T_CACHE, T_STORE)
+    value::Float64  # constante (T_CONST)
+end
+
+# Listas mas largas se evaluan con la recursion: con miles de instrucciones (la poblacion
+# inicial en profundidad 12) el procesador ya no adivina la siguiente instruccion y la
+# lista es mas lenta que la recursion (medido en un modelo de C en C++: 91 s contra 37 s).
+const TAPE_MAX = 512
+# Nodo chico que ya se evaluo una vez sin guardar cache (ver reuse_min_size).
+const SEEN = typemin(Int32)
+# Una sola evaluacion a la vez (un hilo): la lista y su pila se reutilizan.
+const TAPE = TapeOp[]
+const TAPE_STACK = Float64[]
+
+_tape_code(op::UInt8) = op == OP_ADD ? T_ADD : op == OP_SUB ? T_SUB : op == OP_MUL ? T_MUL :
+                        op == OP_DIV ? T_DIV : T_SQRT
+
+# Traduce el subarbol `n` a postfijo (hijo izquierdo, derecho y luego el operador):
+# - nodo que se lee directo (variable, constante o plegado): T_VAR o T_CONST;
+# - nodo con cache completo para este dataset: T_CACHE (no se recorre su subarbol);
+# - nodo de tamano >= S: guarda su cache al evaluarse, igual que la recursion;
+# - nodo con reuse <= tamano < S: guarda su cache la SEGUNDA vez que se evalua (la
+#   primera solo se marca con SEEN). Asi solo guardan cache los subarboles chicos que de
+#   verdad se reusan, sin el costo de memoria de bajar S para toda la poblacion.
+# T_STORE lleva el nodo en `arg`; su lugar en el cache se reserva despues
+# (_resolve_stores!), solo si se usa la lista.
+# `covered`: un ancestro chico ya va a guardar su cache en esta evaluacion. Entonces este
+# nodo no guarda ni se marca: la proxima vez se lee el ancestro y no se baja hasta aqui.
+# Sin esta regla, en profundidad 15 (S = 512) cada hijo guardaba cientos de subarboles
+# anidados y la memoria se disparaba (modelo en C++: 5.9 GB contra 2.0 GB con 2,000 arboles).
+function _compile!(tape::Vector{TapeOp}, g::Graph, n::Int32, id::Int32, S::Int, reuse::Int,
+                   covered::Bool=false)
+    r = @inbounds g.nodes[n]
+    if _isdirect(r)
+        push!(tape, r.kind == K_VAR ? TapeOp(T_VAR, r.left, 0, 0.0) :
+                                      TapeOp(T_CONST, Int32(0), 0, r.value))
+        return nothing
+    end
+    cid = @inbounds g.cache_id[n]
+    if cid == id
+        off = @inbounds g.cache_off[n]
+        push!(tape, TapeOp(T_CACHE, Int32(off >> 32), Int(off & 0xffffffff), 0.0))
+        return nothing
+    end
+    small = !covered && reuse > 0 && reuse <= r.size < S
+    inside = covered || (small && cid == SEEN)  # este nodo guardara: sus hijos no
+    _compile!(tape, g, r.left, id, S, reuse, inside)
+    r.kind == OP_SQRT || _compile!(tape, g, r.right, id, S, reuse, inside)
+    push!(tape, TapeOp(_tape_code(r.kind), Int32(0), 0, 0.0))
+    store = r.size >= S || cid == -id
+    if !store && small
+        if cid == SEEN
+            store = true
+        else
+            @inbounds g.cache_id[n] = SEEN
+        end
+    end
+    store && push!(tape, TapeOp(T_STORE, n, 0, 0.0))
+    return nothing
+end
+
+# Reserva el cache de los nodos que se van a guardar y pone su lugar en la lista.
+function _resolve_stores!(tape::Vector{TapeOp}, g::Graph, id::Int32, rows::Int)
+    @inbounds for k in eachindex(tape)
+        op = tape[k]
+        op.code == T_STORE || continue
+        n = op.arg
+        if g.cache_id[n] != -id   # un nodo repetido en el arbol se reserva una sola vez
+            g.cache_off[n] = _new_slot!(g, rows)
+            g.cache_id[n] = -id
+            push!(g.filling, n)
+        end
+        off = g.cache_off[n]
+        tape[k] = TapeOp(T_STORE, Int32(off >> 32), Int(off & 0xffffffff), 0.0)
+    end
+    return nothing
+end
+
+# Valor del arbol en la fila i recorriendo la lista con una pila.
+@inline function _run_tape(tape::Vector{TapeOp}, stack::Vector{Float64},
+                           blocks::Vector{Vector{Float64}}, x::Vector{Float64}, i::Int)::Float64
+    sp = 0
+    @inbounds for k in eachindex(tape)
+        op = tape[k]
+        c = op.code
+        if c == T_VAR
+            sp += 1
+            stack[sp] = x[op.arg]
+        elseif c == T_CONST
+            sp += 1
+            stack[sp] = op.value
+        elseif c == T_CACHE
+            sp += 1
+            stack[sp] = blocks[op.arg][op.start + i]
+        elseif c == T_STORE
+            blocks[op.arg][op.start + i] = stack[sp]
+        elseif c == T_SQRT
+            stack[sp] = protected_sqrt(stack[sp])
+        else
+            b = stack[sp]
+            sp -= 1
+            a = stack[sp]
+            stack[sp] = c == T_ADD ? a + b : c == T_SUB ? a - b : c == T_MUL ? a * b :
+                        protected_div(a, b)
+        end
+    end
+    return @inbounds stack[1]
+end
+
+# Mismo ciclo de filas que fitness, pero con la lista ya compilada en TAPE.
+function _fitness_tape(g::Graph, data::Dataset, id::Int32, rows::Int, width::Int,
+                       stack_size::Int, cut::Float64)::Float64
+    tape = TAPE
+    _resolve_stores!(tape, g, id, rows)
+    stack = TAPE_STACK
+    length(stack) < stack_size && resize!(stack, stack_size)
+    blocks = g.blocks
+    total = 0.0
+    @inbounds for i in 1:rows
+        x = width == 0 ? ZERO_ROW : data.rows[i]
+        predicted = _run_tape(tape, stack, blocks, x, i)
+        difference = data.y[i] - predicted
+        squared = difference * difference
+        if !isfinite(squared)
+            _abandon_filling!(g)
+            return Inf
+        end
+        total += squared
+        if !isfinite(total) || total / rows > cut
+            _abandon_filling!(g)
+            return Inf
+        end
+    end
+    for n in g.filling
+        @inbounds g.cache_id[n] = id  # cache completo para todas las filas
+    end
+    empty!(g.filling)
+    return total / rows
+end
+
+# --- Lista postfija por bloques de filas (batch) -----------------------------------
+# En vez de recorrer la lista una vez por fila, se recorre una vez por bloque de BATCH_ROWS
+# filas: cada instruccion trabaja sobre las filas del bloque. Cada lugar de la pila es una
+# columna de BATCH_ROWS valores (la pila es un solo Vector: el lugar p ocupa
+# (p-1)*BATCH_ROWS+1 .. p*BATCH_ROWS). Son las mismas operaciones, y la suma del error se
+# hace fila por fila en el mismo orden, con el mismo corte: el MSE es identico bit a bit.
+# Como el costo de decidir cada instruccion se reparte entre las filas del bloque, aqui
+# tambien conviene la lista en los arboles largos: no se usa TAPE_MAX.
+const BATCH_ROWS = 64
+
+function _run_tape_batch!(tape::Vector{TapeOp}, stack::Vector{Float64},
+                          blocks::Vector{Vector{Float64}}, cols::Matrix{Float64},
+                          start::Int, count::Int)
+    B = BATCH_ROWS
+    sp = 0
+    @inbounds for op in tape
+        c = op.code
+        if c == T_VAR
+            base = sp * B
+            sp += 1
+            j = Int(op.arg)
+            for k in 1:count
+                stack[base + k] = cols[start + k, j]
+            end
+        elseif c == T_CONST
+            base = sp * B
+            sp += 1
+            v = op.value
+            for k in 1:count
+                stack[base + k] = v
+            end
+        elseif c == T_CACHE
+            base = sp * B
+            sp += 1
+            block = blocks[op.arg]
+            first = op.start + start
+            for k in 1:count
+                stack[base + k] = block[first + k]
+            end
+        elseif c == T_STORE
+            base = (sp - 1) * B
+            block = blocks[op.arg]
+            first = op.start + start
+            for k in 1:count
+                block[first + k] = stack[base + k]
+            end
+        elseif c == T_SQRT
+            base = (sp - 1) * B
+            for k in 1:count
+                stack[base + k] = protected_sqrt(stack[base + k])
+            end
+        else
+            right = (sp - 1) * B
+            sp -= 1
+            left = (sp - 1) * B
+            if c == T_ADD
+                for k in 1:count
+                    stack[left + k] = stack[left + k] + stack[right + k]
+                end
+            elseif c == T_SUB
+                for k in 1:count
+                    stack[left + k] = stack[left + k] - stack[right + k]
+                end
+            elseif c == T_MUL
+                for k in 1:count
+                    stack[left + k] = stack[left + k] * stack[right + k]
+                end
+            else
+                for k in 1:count
+                    stack[left + k] = protected_div(stack[left + k], stack[right + k])
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+# Mismo ciclo de filas que fitness, pero calculando las predicciones por bloques.
+function _fitness_tape_batch(g::Graph, data::Dataset, id::Int32, rows::Int,
+                             stack_size::Int, cut::Float64)::Float64
+    tape = TAPE
+    _resolve_stores!(tape, g, id, rows)
+    stack = TAPE_STACK
+    length(stack) < BATCH_ROWS * stack_size && resize!(stack, BATCH_ROWS * stack_size)
+    blocks, cols, y = g.blocks, data.cols, data.y
+    total = 0.0
+    for start in 0:BATCH_ROWS:(rows - 1)
+        count = min(BATCH_ROWS, rows - start)
+        _run_tape_batch!(tape, stack, blocks, cols, start, count)
+        @inbounds for k in 1:count  # stack[1:count] = prediccion de las filas del bloque
+            difference = y[start + k] - stack[k]
+            squared = difference * difference
+            if !isfinite(squared)
+                _abandon_filling!(g)
+                return Inf
+            end
+            total += squared
+            if !isfinite(total) || total / rows > cut
+                _abandon_filling!(g)
+                return Inf
+            end
+        end
+    end
+    for n in g.filling
+        @inbounds g.cache_id[n] = id  # cache completo para todas las filas
+    end
+    empty!(g.filling)
+    return total / rows
+end
+
 """
 MSE evaluando fila por fila (como el pseudocodigo del manual), con cache de resultados
 en los nodos de tamano >= cache_min_size (NO_CACHE lo desactiva). Mismas operaciones y
 mismo orden de suma que A y B: el MSE es identico bit a bit.
 
+Con `tape = true`, el arbol se traduce antes a una lista postfija (si no pasa de TAPE_MAX
+instrucciones) y se recorre esa lista en cada fila. Con `reuse_min_size = K > 0`, los
+subarboles de K nodos o mas (y menos de cache_min_size) guardan cache la segunda vez que
+se evaluan. Con `batch = true` (y `tape = true`), la lista se recorre por bloques de
+BATCH_ROWS filas en vez de fila por fila, sin limite de largo. Ninguna cambia el MSE.
+
 Con `cut` finito, deja de evaluar en cuanto el MSE parcial (suma/n) supera `cut`: las
 filas restantes solo pueden sumar, asi que el MSE final seria mayor; devuelve +Inf.
 """
 function fitness(t::Tree, data::Dataset, cache_min_size::Integer=DEFAULT_CACHE_MIN_SIZE;
-                 cut::Float64=Inf)::Float64
+                 cut::Float64=Inf, tape::Bool=false, reuse_min_size::Integer=0,
+                 batch::Bool=false)::Float64
     g = _track!(t.g)
     root = g.nodes[t.i]
     width = nvariables(data)
@@ -566,6 +852,14 @@ function fitness(t::Tree, data::Dataset, cache_min_size::Integer=DEFAULT_CACHE_M
     id = Int32(data.id)
     S = Int(min(cache_min_size, typemax(Int32) + 1))
     direct = _isdirect(root)
+    if tape && !direct
+        reuse = cache_min_size >= NO_CACHE ? 0 : Int(reuse_min_size)
+        empty!(TAPE)
+        _compile!(TAPE, g, t.i, id, S, reuse)
+        batch && return _fitness_tape_batch(g, data, id, rows, Int(root.height) + 2, cut)
+        length(TAPE) <= TAPE_MAX &&
+            return _fitness_tape(g, data, id, rows, width, Int(root.height) + 2, cut)
+    end
     total = 0.0
     @inbounds for i in 1:rows
         x = width == 0 ? ZERO_ROW : data.rows[i]
@@ -797,6 +1091,9 @@ Base.@kwdef struct GPOptions
     early_cut::Bool = true       # corte temprano exacto (--no-cut lo apaga)
     order_by_parent::Bool = true # evaluar primero los hijos de mejores padres (--no-order lo apaga)
     skip_duplicates::Bool = true # un hijo identico a su padre recibe su MSE sin evaluarse (--no-dup)
+    tape::Bool = true            # evaluar con lista postfija (--no-tape la apaga)
+    reuse_min_size::Int = 4      # subarboles de este tamano o mas guardan cache al reusarse (0 = no)
+    batch::Bool = true           # lista postfija por bloques de filas (--no-batch: fila por fila)
     # Funcion (generacion, mejor_mse) llamada al terminar cada generacion (0 = poblacion
     # inicial), para mostrar el avance en vivo. No toca el generador: el GP da lo mismo.
     on_generation::Any = nothing
@@ -844,9 +1141,9 @@ function _record_best!(h::Vector{Float64}, s::Float64, cap::Int)
 end
 
 function _score_child!(heap::Vector{Float64}, t::Tree, data::Dataset, S::Int, half::Int,
-                       early_cut::Bool)
+                       early_cut::Bool, tape::Bool, reuse::Int, batch::Bool)
     cut = (early_cut && length(heap) == half) ? @inbounds(heap[1]) : Inf
-    s = fitness(t, data, S; cut=cut)
+    s = fitness(t, data, S; cut=cut, tape=tape, reuse_min_size=reuse, batch=batch)
     _record_best!(heap, s, half)
     return s
 end
@@ -926,7 +1223,9 @@ function full_gp(data::Dataset, options::GPOptions)
     sizehint!(population, N)
     for _ in 1:N
         root = _grow!(g, max_depth, nvars, rng, true)
-        push!(population, Individual(fitness(Tree(g, root), data, S), root))
+        push!(population, Individual(fitness(Tree(g, root), data, S; tape=options.tape,
+                                             reuse_min_size=options.reuse_min_size,
+                                             batch=options.batch), root))
     end
 
     history = Float64[]
@@ -993,7 +1292,8 @@ function full_gp(data::Dataset, options::GPOptions)
         end
         for i in evaluation_order
             child_score[i] = isnan(copy_score[i]) ?
-                _score_child!(heap, Tree(g, children[i]), data, S, half, options.early_cut) :
+                _score_child!(heap, Tree(g, children[i]), data, S, half, options.early_cut,
+                              options.tape, options.reuse_min_size, options.batch) :
                 _score_copy!(heap, copy_score[i], half, options.early_cut)
         end
         for i in 1:N
@@ -1307,6 +1607,98 @@ function run_tests(; verbose::Bool=false)
     end
     check(cut_ok, "corte temprano: MSE exacto o +Inf solo si el MSE real supera el corte")
 
+    # --- Lista postfija y cache al reusarse: mismo MSE bit a bit -----------------
+    # Se alternan la lista y la recursion sobre el mismo grafo (el cache que llena una lo
+    # lee la otra), en frio, la segunda vez (cuando los subarboles chicos guardan cache)
+    # y en caliente; con otro dataset; con arboles de mas de TAPE_MAX instrucciones (se
+    # evaluan con la recursion); con el corte temprano, y en hijos con los padres en cache.
+    tape_bad = 0
+    for graph in (Graph(), Graph(fold=false))
+        trees = [grow_random(1 + t % 9, 3, rng; graph=graph) for t in 1:120]
+        append!(trees, [grow_full(9, 3, rng; graph=graph) for _ in 1:4])
+        for t in trees, S in (NO_CACHE, 1, 4, 16), reuse in (0, 2, 4)
+            ref = _reference_mse(t, xs, ys)
+            for _ in 1:3
+                fitness(t, hard, S; tape=true, reuse_min_size=reuse) === ref || (tape_bad += 1)
+                fitness(t, hard, S) === ref || (tape_bad += 1)
+            end
+            fitness(t, other, S; tape=true, reuse_min_size=reuse) ===
+                _reference_mse(t, xs[1:40], ys[41:80]) || (tape_bad += 1)
+        end
+        for t in trees
+            exact_mse = _reference_mse(t, xs, ys)
+            cut = 10.0^rand(rng, -2:4)
+            s = fitness(t, hard, 4; cut=cut, tape=true, reuse_min_size=2)
+            (isinf(s) ? (exact_mse > cut || isinf(exact_mse)) : (s === exact_mse && s <= cut)) ||
+                (tape_bad += 1)
+        end
+        for _ in 1:300
+            a, b = trees[rand(rng, 1:length(trees))], trees[rand(rng, 1:length(trees))]
+            c, d = crossover(a, b, rng)
+            m = mutation(a, 3, rng)
+            for t in (c, d, m), _ in 1:2
+                fitness(t, hard, 16; tape=true, reuse_min_size=4) === _reference_mse(t, xs, ys) ||
+                    (tape_bad += 1)
+            end
+        end
+    end
+    check(tape_bad == 0, "lista postfija y cache al reusarse == referencia, bit a bit")
+
+    # --- Lista postfija por bloques de filas: mismo MSE bit a bit ------------------
+    # 150 filas (dos bloques llenos y uno de 22) y 40 (un bloque incompleto); se alterna con
+    # la recursion y la lista fila por fila sobre el mismo grafo; arboles grandes (sin
+    # TAPE_MAX), arboles que llegan a Inf o NaN, corte temprano e hijos.
+    batch_bad = 0
+    for graph in (Graph(), Graph(fold=false))
+        trees = [grow_random(1 + t % 9, 3, rng; graph=graph) for t in 1:120]
+        append!(trees, [grow_full(9, 3, rng; graph=graph) for _ in 1:4])
+        for t in trees, S in (NO_CACHE, 1, 16), reuse in (0, 4)
+            ref = _reference_mse(t, xs, ys)
+            for _ in 1:2
+                fitness(t, hard, S; tape=true, reuse_min_size=reuse, batch=true) === ref ||
+                    (batch_bad += 1)
+                fitness(t, hard, S; tape=true, reuse_min_size=reuse) === ref || (batch_bad += 1)
+            end
+            fitness(t, other, S; tape=true, reuse_min_size=reuse, batch=true) ===
+                _reference_mse(t, xs[1:40], ys[41:80]) || (batch_bad += 1)
+        end
+        for t in trees
+            exact_mse = _reference_mse(t, xs, ys)
+            cut = 10.0^rand(rng, -2:4)
+            s = fitness(t, hard, 4; cut=cut, tape=true, reuse_min_size=2, batch=true)
+            (isinf(s) ? (exact_mse > cut || isinf(exact_mse)) : (s === exact_mse && s <= cut)) ||
+                (batch_bad += 1)
+        end
+        for _ in 1:300
+            a, b = trees[rand(rng, 1:length(trees))], trees[rand(rng, 1:length(trees))]
+            c, d = crossover(a, b, rng)
+            for t in (c, d, mutation(a, 3, rng))
+                fitness(t, hard, 16; tape=true, reuse_min_size=4, batch=true) ===
+                    _reference_mse(t, xs, ys) || (batch_bad += 1)
+            end
+        end
+    end
+    blowup = "(x1 / 0)"
+    for _ in 1:6
+        blowup = "($blowup * $blowup)"
+    end
+    for text in ("sqrt(($blowup - $blowup))", "($blowup - $blowup)", "sqrt((x1 * x2))")
+        t = parse_expression(text; graph=_track!(Graph()))
+        fitness(t, hard, 1; tape=true, batch=true) === _reference_mse(t, xs, ys) ||
+            (batch_bad += 1)
+    end
+    check(batch_bad == 0, "lista postfija por bloques de filas == referencia, bit a bit")
+    nested = parse_expression("((x1 + x2) * (x2 - 0.5))"; graph=_track!(Graph()))
+    fitness(nested, hard, 16; tape=true, reuse_min_size=2)  # primera vez: solo se marcan
+    empty!(TAPE)
+    _compile!(TAPE, nested.g, nested.i, Int32(hard.id), 16, 2)
+    check(count(op -> op.code == T_STORE, TAPE) == 1,
+          "cache al reusarse: solo guarda el subarbol chico mas externo")
+    wide = grow_full(9, 3, rng; graph=_track!(Graph()))  # _track!: _compile! usa cache_id
+    empty!(TAPE)
+    _compile!(TAPE, wide.g, wide.i, Int32(hard.id), 16, 4)
+    check(length(TAPE) > TAPE_MAX, "un arbol de profundidad 9 completo pasa de TAPE_MAX (usa la recursion)")
+
     # --- Crossover y mutacion: copia de camino --------------------------------
     a, b = grow_full(4, 2, rng), grow_full(3, 2, rng)
     old_a, old_b = expression(a, 17), expression(b, 17)
@@ -1401,6 +1793,19 @@ function run_tests(; verbose::Bool=false)
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
                                                     seed=seed, skip_duplicates=false))),
               "reutilizar el MSE de los hijos que copian a un padre no altera el GP")
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, tape=false))),
+              "la lista postfija no altera el GP")
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, batch=false))),
+              "evaluar por bloques de filas no altera el GP")
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, reuse_min_size=0))),
+              "el cache al reusarse no altera el GP")
+        check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
+                                                    seed=seed, tape=false, reuse_min_size=0,
+                                                    cache_min_size=4))),
+              "sin lista ni cache al reusarse, con otro S: mismo GP")
         # cache_mb=1 con S=1 fuerza la compactacion del grafo en cada generacion.
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
                                                     seed=seed, cache_mb=1, cache_min_size=1))),

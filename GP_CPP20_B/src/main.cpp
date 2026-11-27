@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -33,7 +34,8 @@ struct Args {
      size_t generations = 100; // El manual no lo fija; se acordo usar 100.
      size_t variables = 2;
      size_t batch_pairs = 0; // 0 = los 10000 arboles en memoria a la vez
-     uint64_t seed = 5;  // semilla por defecto del proyecto
+     uint64_t seed = 0;
+    bool seed_given = false; // sin --seed se elige una al azar (resolve_seed)
 };
 
 //  stoull acepta "-1" y lo convierte en 18446744073709551615: se exige un
@@ -72,11 +74,25 @@ Args parse_args(int argc, char** argv) {
         else if (key == "--population") opts.population = parse_unsigned(key, value);
         else if (key == "--generations") opts.generations = parse_unsigned(key, value);
         else if (key == "--variables") opts.variables = parse_unsigned(key, value);
-        else if (key == "--seed") opts.seed = parse_unsigned(key, value);
+        else if (key == "--seed") { opts.seed = parse_unsigned(key, value); opts.seed_given = true; }
         else if (key == "--batch-pairs") opts.batch_pairs = parse_unsigned(key, value);
         else throw  invalid_argument("Opcion desconocida: " + key);
     }
     return opts;
+}
+
+// Sin --seed, una semilla al azar (de 1 a 999999, facil de copiar). Se imprime por stderr
+// para no mezclarla con la salida normal y poder repetir la corrida con --seed=S.
+// random_device se mezcla con el reloj por si en algun compilador fuera determinista.
+void resolve_seed(Args& args) {
+    if (args.seed_given) return;
+    random_device device;
+    const uint64_t noise =
+        (static_cast<uint64_t>(device()) << 32) ^ device() ^
+        static_cast<uint64_t>(chrono::high_resolution_clock::now().time_since_epoch().count());
+    args.seed = 1 + mt19937_64(noise)() % 999999;
+    cerr << "Semilla aleatoria: " << args.seed << " (para repetir esta corrida: --seed="
+         << args.seed << ")" << endl;
 }
 
  vector<int> parse_depths( string list) {
@@ -96,17 +112,20 @@ void print_help() {
   gp_b --test
   gp_b --demo [--data=data/ejemplo.csv]
   gp_b --bench-crossover [--trees=10000] [--depths=7,9,10,12,15]
-                          [--variables=2] [--seed=5] [--batch-pairs=0]
+                          [--variables=2] [--seed=S] [--batch-pairs=0]
   gp_b --bench-gp [--data=dataset.csv] [--population=5000]
-                  [--depths=7,9,12] [--generations=100] [--seed=5] [--history=archivo.csv]
+                  [--depths=7,9,12] [--generations=100] [--seed=S] [--history=archivo.csv]
                   [--no-fold] [--no-cut] [--no-order] [--no-dup] [--quiet]
   gp_b --eval-file --file=arboles.txt [--data=dataset.csv]
        Lee una expresion por linea e imprime MSE (17 digitos), profundidad,
        nodos y la expresion, separados por tabuladores (para comparar con A y C).
-  gp_b --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=5] [--full]
+  gp_b --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=S] [--full]
        Escribe arboles grow_random (o grow_full) sin perdida, uno por linea.
 
 El CSV debe tener cabecera opcional, x1,x2,...,y, y como ultima columna.
+--seed: semilla del generador aleatorio. Sin --seed se elige una al azar y se imprime
+(por stderr) para poder repetir la corrida con --seed=S. Los scripts de benchmark siempre
+pasan una (5 por defecto).
 El manual no fija el numero de generaciones; se acordo usar 100 (valor por defecto).
 --history=archivo.csv: escribe el mejor MSE de cada generacion (depth,generation,best_mse,
 con 17 digitos), fuera del cronometro. La generacion 0 es la poblacion inicial.
@@ -184,7 +203,11 @@ cout<<"best_expression\n\""<< result.best->expression() << "\"\n";
 
 int main(int argc, char** argv) {
     try {
-        const Args args = parse_args(argc, argv);
+        Args args = parse_args(argc, argv);
+        if (args.mode == "--demo" || args.mode == "--bench-crossover" ||
+            args.mode == "--bench-gp" || args.mode == "--export-trees") {
+            resolve_seed(args);
+        }
         if (args.mode == "--help" || args.mode == "-h") {
             print_help();
         } else if (args.mode == "--test") {
@@ -255,4 +278,4 @@ int main(int argc, char** argv) {
          cerr << "ERROR: " << error.what() << '\n';
         return 1;
     }
-}
+}
