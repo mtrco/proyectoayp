@@ -1,6 +1,7 @@
 #include "gp.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <fstream>
@@ -26,6 +27,7 @@ struct Args {
     bool early_cut = true;      // --no-cut lo apaga
     bool order_by_parent = true; // --no-order lo apaga
     bool skip_duplicates = true; // --no-dup lo apaga
+    bool quiet = false;          // --quiet: no mostrar el MSE de cada generacion en vivo
     std::size_t population = 5000;
     std::size_t generations = 100; // El manual no lo fija; se acordo usar 100.
     std::size_t variables = 2;
@@ -52,6 +54,7 @@ Args parse_args(int argc, char** argv) {
         if (arg == "--no-cut") { opts.early_cut = false; continue; }
         if (arg == "--no-order") { opts.order_by_parent = false; continue; }
         if (arg == "--no-dup") { opts.skip_duplicates = false; continue; }
+        if (arg == "--quiet") { opts.quiet = true; continue; }
         const std::size_t equal = arg.find('=');
         if (equal == std::string::npos) {
             throw std::invalid_argument("Se esperaba --opcion=valor: " + arg);
@@ -95,7 +98,7 @@ void print_help() {
                           [--variables=2] [--seed=5] [--batch-pairs=0]
   gp_b --bench-gp [--data=dataset.csv] [--population=5000]
                   [--depths=7,9,12] [--generations=100] [--seed=5] [--history=archivo.csv]
-                  [--no-fold] [--no-cut] [--no-order] [--no-dup]
+                  [--no-fold] [--no-cut] [--no-order] [--no-dup] [--quiet]
   gp_b --eval-file --file=arboles.txt [--data=dataset.csv]
        Lee una expresion por linea e imprime MSE (17 digitos), profundidad,
        nodos y la expresion, separados por tabuladores (para comparar con A y C).
@@ -106,6 +109,9 @@ El CSV debe tener cabecera opcional, x1,x2,...,y, y como ultima columna.
 El manual no fija el numero de generaciones; se acordo usar 100 (valor por defecto).
 --history=archivo.csv: escribe el mejor MSE de cada generacion (depth,generation,best_mse,
 con 17 digitos), fuera del cronometro. La generacion 0 es la poblacion inicial.
+--bench-gp muestra en vivo, por la salida de errores (stderr), el mejor MSE de cada generacion
+y el tiempo que lleva; la salida normal (stdout) queda como CSV. El tiempo de imprimir esas
+lineas se descuenta del cronometro. --quiet las apaga.
 En el benchmark de crossover se mide solo el crossover, no generar padres.
 Por defecto los 10000 padres estan en memoria a la vez (protocolo acordado).
 --batch-pairs=2500 deja 5000 a la vez si no alcanza la RAM.
@@ -135,10 +141,31 @@ void run_gp_benchmark(const gp::Dataset& data, const std::vector<int>& depths,
         opts.early_cut = args.early_cut;
         opts.order_by_parent = args.order_by_parent;
         opts.skip_duplicates = args.skip_duplicates;
-        const auto start = std::chrono::steady_clock::now();
+        // Avance en vivo por stderr (stdout queda como CSV para los scripts). Lo que tarda
+        // imprimir se acumula en `paused` y se descuenta del tiempo medido.
+        using clock = std::chrono::steady_clock;
+        clock::time_point start;
+        clock::duration paused{};
+        if (!args.quiet) {
+            opts.on_generation = [&](std::size_t generation, double best) {
+                const auto now = clock::now();
+                const double so_far = std::chrono::duration<double>(now - start - paused).count();
+                char line[160];
+                std::snprintf(line, sizeof line, "  prof %d  gen %3zu/%zu  mejor MSE %.10g  (%.1f s)\n",
+                              depth, generation, opts.generations, best, so_far);
+                std::fputs(line, stderr);
+                std::fflush(stderr);
+                paused += clock::now() - now;
+            };
+        }
+        start = clock::now();
         auto result = gp::full_gp(data, opts);
-        const auto stop = std::chrono::steady_clock::now();
-        const double seconds = std::chrono::duration<double>(stop - start).count();
+        const auto stop = clock::now();
+        const double seconds = std::chrono::duration<double>(stop - start - paused).count();
+        if (!args.quiet) {  // cuanto costo imprimir el avance (ya descontado de `seconds`)
+            std::fprintf(stderr, "  prof %d  tiempo de imprimir el avance (descontado): %.3f ms\n",
+                         depth, std::chrono::duration<double, std::milli>(paused).count());
+        }
         std::cout << depth << ',' << opts.population_size << ',' << opts.generations << ','
                   << std::setprecision(9) << seconds << ',' << result.best_fitness << ",\""
                   << result.best->expression() << "\"\n";

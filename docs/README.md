@@ -149,7 +149,9 @@ se parecen muchísimo a sus padres**, y por eso el cache de C funciona tan bien.
   cruces. Solo se cronometra el crossover. Los hijos se liberan cada 16 cruces, fuera del
   cronómetro.
 - **GP completo:** el tiempo total de `full_gp`, con el dataset oficial `datos/dataset3a.csv`.
-  El mejor MSE de cada generación se escribe después de detener el cronómetro.
+  El mejor MSE de cada generación se muestra en pantalla mientras corre (por stderr; el
+  tiempo de imprimirlo se descuenta y `--quiet` lo apaga) y se escribe en el CSV de
+  `--history` después de detener el cronómetro.
 - **Un proceso por profundidad**, en los dos benchmarks: `benchmarks/benchmark_A.ps1`,
   `benchmark_B.ps1` y `benchmark_C.ps1` (uno por implementación) o `correr_benchmarks.ps1`
   (las tres, con la verificación cruzada antes de medir).
@@ -611,9 +613,18 @@ un hilo, población 5,000, semilla 5, un proceso por profundidad.
 | Mejor MSE | 0.10998153 | 0.103945666 | 0.125202855 |
 
 En C la semilla importa: con las semillas 1 a 5, 7, 11, 42, 123 y 2026, la suma de las tres
-profundidades fue de 199 s (semilla 5, la más rápida y con el mejor MSE) a 267 s. B con 100
-generaciones en profundidad 12 tarda, según la medición con 10 generaciones, unos 25-30
-minutos.
+profundidades fue de 199 s (semilla 5, la más rápida y con el mejor MSE) a 267 s.
+
+| GP completo, B, 100 generaciones | Prof. 12 |
+|---|---|
+| Tiempo | 1,115.7 s (18.6 min) |
+| Mejor MSE | 0.411568995 |
+
+En profundidad 12, C es unas 10.6 veces más rápido que B (105 s contra 1,116 s). El MSE de
+B no se compara semilla por semilla con el de C: B usa otro generador aleatorio, así que con
+la semilla 5 hace otra corrida. Con 10 generaciones B tardaba unos 17 s por generación; con
+100, el promedio baja a unos 11 s, porque al converger la población el corte temprano y los
+hijos idénticos a su padre ahorran más.
 
 | Crossover (µs por cruce, 10,000 árboles en memoria) | Prof. 7 | Prof. 9 | Prof. 10 | Prof. 12 | Prof. 15 |
 |---|---|---|---|---|---|

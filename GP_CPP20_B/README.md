@@ -70,6 +70,12 @@ que el docente debe proporcionar. Formato: `x1,x2,...,y` (ultima columna la sali
 `--history=archivo.csv` escribe `depth,generation,best_mse` (MSE con 17 digitos) despues
 de detener el cronometro; la generacion 0 es la poblacion inicial.
 
+Ademas, `--bench-gp` muestra **en pantalla, mientras corre**, una linea por generacion con el
+mejor MSE y el tiempo que lleva (`  prof 7  gen  12/100  mejor MSE 0.1102234512  (5.3 s)`).
+Esas lineas salen por stderr, asi que stdout sigue siendo solo el CSV que leen los scripts, y
+el tiempo de imprimirlas se descuenta del cronometro (al final de cada profundidad dice cuanto
+fue: unos 0.04 ms por linea en una terminal de Linux). `--quiet` las apaga.
+
 Para medir sin las optimizaciones pendientes de confirmar (mismo resultado):
 `--no-fold --no-cut --no-dup`.
 

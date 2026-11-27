@@ -1,0 +1,194 @@
+BENCHMARKS DEL PROYECTO DE PROGRAMACIÓN GENÉTICA (A, B y C)
+=============================================================
+
+Protocolo por defecto (manual, Parte 4, más lo acordado):
+
+  Crossover     10,000 árboles grow_full en memoria a la vez, 2 variables,
+                profundidades 7, 9, 10, 12 y 15. Se mide solo el crossover.
+  GP completo   población 5,000, 100% grow_full, 50% crossover / 50% mutación,
+                torneo binario, reemplazo 50/50, profundidades 7, 9 y 12,
+                100 generaciones, dataset oficial datos\dataset3a.csv.
+  Semilla       5
+  Ejecución     cada profundidad en un proceso aparte (un comando por profundidad).
+  Salidas       tiempo, mejor MSE final y mejor MSE de CADA generación (en pantalla
+                mientras corre y en gp_historial_X.csv).
+  Paralelismo   ninguno (un solo hilo).
+
+
+-------------------------------------------------------------
+0. ANTES DE EMPEZAR (una vez por ventana de PowerShell)
+-------------------------------------------------------------
+
+  cd C:\proyecto
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+- B debe estar compilado en Visual Studio con la configuración x64-Release
+  (queda en GP_CPP20_B\out\build\x64-release\gp_b.exe).
+- No uses la computadora mientras mide, cierra otros programas y conecta el cargador.
+- No corras dos benchmarks al mismo tiempo: se quitan procesador y los tiempos no sirven.
+- Los scripts se corren así, con .\ (no con "powershell -File"), porque con -File no
+  funcionan las listas separadas por comas, como -Seeds 1,5.
+
+
+-------------------------------------------------------------
+1. BENCHMARKS POR DEFECTO
+-------------------------------------------------------------
+
+  .\benchmarks\benchmark_A.ps1
+  .\benchmarks\benchmark_B.ps1
+  .\benchmarks\benchmark_C.ps1
+
+Cada script hace, en orden:
+  1. Pruebas internas de su implementación (--test). Si fallan, no mide nada.
+  2. Benchmark de crossover: un proceso por profundidad (7, 9, 10, 12, 15).
+  3. GP completo: un proceso por profundidad (7, 9, 12). Mientras corre muestra una línea
+     por generación:   prof 7  gen  12/100  mejor MSE 0.1102234512  (5.3 s)
+
+Resultados en la carpeta resultados_<A|B|C>_AAAAMMDD_HHMM:
+  pruebas_X.txt              salida de --test
+  equipo_y_parametros.txt    CPU, RAM, Windows, Julia, parámetros y SHA-256 del dataset
+  crossover_X.csv            impl,seed,depth,trees,resident_trees,crossovers,
+                             elapsed_seconds,mean_seconds_per_crossover,mean_nodes
+  gp_X.csv                   impl,seed,depth,population,generations,elapsed_seconds,
+                             best_mse,best_expression
+  gp_historial_X.csv         impl,seed,depth,generation,best_mse
+                             (generación 0 = población inicial; MSE con 17 dígitos)
+
+Tiempo aproximado con la semilla 5 (equipo de pruebas: Ryzen 7 170, 15.3 GB):
+  C   unos 5 minutos         (GP en profundidad 12: ~2 minutos, medido)
+  B   unos 25 minutos        (GP en profundidad 12: 18.6 minutos, medido)
+  A   una hora o más         (estimado)
+
+Las tres juntas, con la verificación cruzada entre A, B y C antes de medir:
+
+  .\correr_benchmarks.ps1 -IncluirA
+
+
+-------------------------------------------------------------
+2. PARÁMETROS QUE EL PROFESOR PODRÍA PEDIR CAMBIAR
+-------------------------------------------------------------
+
+Funcionan igual en benchmark_A.ps1, benchmark_B.ps1 y benchmark_C.ps1.
+
+  Si pide...                            Agrega...
+  ------------------------------------  ----------------------------------------------
+  Otra semilla                          -Seeds 7
+  Varias semillas                       -Seeds 1,2,3,4,5
+  Otro número de generaciones           -Generations 50
+  Otras profundidades del GP            -GPDepths 7,9,12
+  Otras profundidades del crossover     -CrossDepths 7,9,10,12,15
+  Otra población (múltiplo de 4)        -Population 1000
+  Otro número de árboles (par)          -Trees 10000
+  Menos árboles en memoria a la vez     -ParesEnMemoria 2500   (5,000 a la vez)
+  Todos los árboles en memoria          -ParesEnMemoria 0      (por defecto, si hay
+                                                                12 GB de RAM o más)
+  Otro número de variables (crossover)  -Variables 3
+  Otro dataset                          -Data datos\dataset2.csv
+  Solo el crossover                     -SoloCrossover
+  Solo el GP completo                   -SoloGP
+
+Optimizaciones de B y C que dan EXACTAMENTE el mismo resultado (solo cambia el tiempo),
+por si el profesor no acepta alguna:
+
+  Si pide...                            Agrega...
+  ------------------------------------  ----------------------------------------------
+  Quitar todas las dudosas              -SinPendientes
+                                        (= --no-fold --no-cut --no-dup)
+  Sin plegado de constantes             -ExtraGP "--no-fold"
+  Sin corte temprano                    -ExtraGP "--no-cut"
+  Evaluar hijos en orden de creación    -ExtraGP "--no-order"
+  Evaluar también hijos idénticos       -ExtraGP "--no-dup"
+    a su padre
+  Varias a la vez                       -ExtraGP "--no-order","--no-dup"
+
+Solo C (caché de resultados del GP; mismo resultado):
+
+  Sin caché                             -ExtraGP "--cache-mb=0"
+  Menos RAM (por defecto 1024)          -ExtraGP "--cache-mb=512"
+  Fijar el tamaño mínimo con caché      -ExtraGP "--cache-min-size=64"
+                                        (por defecto automático: 16, 16 y 64 en
+                                        profundidades 7, 9 y 12 con dataset3a)
+
+Solo B (compilador):
+
+  Compilar con clang-cl                 En Visual Studio elige el preset
+                                        "x64 Clang Release" y agrega
+                                        -B GP_CPP20_B\out\build\x64-clang-release\gp_b.exe
+  Otro ejecutable de B                  -B ruta\gp_b.exe
+
+A y C (Julia):
+
+  Otra instalación de Julia             -Julia "C:\ruta\julia.exe"
+
+Ejemplo combinado:
+
+  .\benchmarks\benchmark_B.ps1 -Seeds 1,5 -Generations 50 -SoloGP -SinPendientes
+
+
+-------------------------------------------------------------
+3. COMANDOS DIRECTOS (SIN SCRIPT), UNA PROFUNDIDAD POR COMANDO
+-------------------------------------------------------------
+
+Útiles si el profesor quiere ver o correr un caso suelto. Desde C:\proyecto.
+
+B  (cambia --depths por 7, 9, 10, 12 o 15 en crossover, y 7, 9 o 12 en el GP)
+
+  .\GP_CPP20_B\out\build\x64-release\gp_b.exe --bench-crossover --trees=10000 --depths=15 --variables=2 --seed=5 --batch-pairs=0
+  .\GP_CPP20_B\out\build\x64-release\gp_b.exe --bench-gp --data=datos\dataset3a.csv --population=5000 --depths=12 --generations=100 --seed=5 --history=historial_B_12.csv
+
+C
+
+  julia --startup-file=no -O3 GP_JL_C\main.jl --bench-crossover --trees=10000 --depths=15 --variables=2 --seed=5 --batch-pairs=0
+  julia --startup-file=no -O3 GP_JL_C\main.jl --bench-gp --data=datos\dataset3a.csv --population=5000 --depths=12 --generations=100 --seed=5 --history=historial_C_12.csv
+
+A
+
+  julia --startup-file=no -O3 GP_JL_A\main.jl --bench-crossover --trees=10000 --depths=15 --variables=2 --seed=5 --batch-pairs=0
+  julia --startup-file=no -O3 GP_JL_A\main.jl --bench-gp --data=datos\dataset3a.csv --population=5000 --depths=12 --generations=100 --seed=5 --history=historial_A_12.csv
+
+Notas:
+- Los valores de arriba son los valores por defecto: --seed=5, --generations=100,
+  --population=5000 y --trees=10000 se pueden omitir.
+- --bench-gp muestra en pantalla el mejor MSE de cada generación mientras corre. Sale por
+  la salida de errores (stderr), así que la salida normal sigue siendo el CSV; el tiempo de
+  imprimirlo se descuenta del cronómetro y, al final de cada profundidad, el programa dice
+  cuánto fue ("tiempo de imprimir el avance (descontado)"). --quiet lo apaga.
+- --history=archivo.csv escribe el mejor MSE de cada generación, después de detener el
+  cronómetro.
+- En B y C se pueden agregar al GP --no-fold, --no-cut, --no-order y --no-dup;
+  en C, también --cache-mb=M y --cache-min-size=K.
+- La ayuda completa de cada programa: gp_b.exe --help, julia GP_JL_C\main.jl --help,
+  julia GP_JL_A\main.jl --help.
+
+
+-------------------------------------------------------------
+4. VERIFICACIÓN (CORRECTITUD)
+-------------------------------------------------------------
+
+  .\GP_CPP20_B\out\build\x64-release\gp_b.exe --test
+  julia --startup-file=no -O3 GP_JL_C\main.jl --test
+  julia --startup-file=no -O3 GP_JL_A\main.jl --test
+  julia --startup-file=no -O3 GP_JL_C\tools\cross_check.jl GP_JL_A datos\dataset3a.csv
+  julia --startup-file=no -O3 GP_JL_C\tools\verificar_con_b.jl GP_CPP20_B\out\build\x64-release\gp_b.exe GP_JL_A datos\dataset3a.csv
+
+- cross_check: A y C generan los mismos árboles, los mismos hijos y la misma corrida
+  completa del GP.
+- verificar_con_b: los mismos árboles dan el mismo MSE, bit a bit, en A, B y C.
+- correr_benchmarks.ps1 corre todo esto antes de medir.
+
+
+-------------------------------------------------------------
+5. CÓMO LEER LOS RESULTADOS
+-------------------------------------------------------------
+
+- A y C dan exactamente el mismo mejor MSE y la misma expresión con la misma semilla
+  (misma corrida). B usa otro generador aleatorio (mt19937_64 de C++), así que con la
+  misma semilla hace otra corrida: su MSE es distinto, pero el MSE de un mismo árbol
+  coincide bit a bit con el de A y C.
+- Apagar optimizaciones (--no-fold, --no-cut, --no-order, --no-dup, caché de C) no
+  cambia ningún MSE; solo el tiempo.
+- La semilla sí cambia el tiempo: en C, con 10 semillas, la suma de las tres
+  profundidades fue de 199 s (semilla 5) a 267 s.
+- dataset3a es sin(sqrt(x1² + x2²)). Sin seno entre los operadores del manual, el MSE
+  no puede llegar a 0; una constante da MSE 0.466.
+- Más detalle: docs\README.md (técnicas de eficiencia, verificación y resultados).

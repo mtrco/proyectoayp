@@ -186,6 +186,7 @@ julia --startup-file=no -O3 main.jl --bench-gp --data=..\datos\dataset3a.csv --p
 | `--batch-pairs=K` | Parejas de padres en memoria a la vez en el benchmark de crossover. `0` (por defecto) = los 10,000 arboles a la vez, protocolo acordado; `2500` = 5,000 a la vez |
 | `--generations=G` | Generaciones del GP completo (100 por defecto, lo acordado) |
 | `--history=archivo.csv` | Escribe `depth,generation,best_mse` (17 digitos) fuera del cronometro; la generacion 0 es la poblacion inicial |
+| `--quiet` | No mostrar en pantalla el mejor MSE de cada generacion mientras corre el GP (ver abajo) |
 | `--cache-mb=M` | Presupuesto aproximado del cache del GP, en MB (1024 por defecto; 0 = sin cache) |
 | `--cache-min-size=K` | Tamano minimo de subarbol que guarda cache (0 = automatico) |
 | `--no-fold` | Sin plegado de constantes (mismo resultado) |
@@ -194,6 +195,12 @@ julia --startup-file=no -O3 main.jl --bench-gp --data=..\datos\dataset3a.csv --p
 | `--no-dup` | Evaluar tambien los hijos identicos a su padre (mismo resultado) |
 | `--eval-file --file=arboles.txt --data=...` | Lee expresiones (una por linea) e imprime MSE con 17 digitos, profundidad y nodos |
 | `--export-trees --count=N --depth=D --variables=V --seed=S [--full]` | Escribe arboles sin perdida (17 digitos) |
+
+`--bench-gp` muestra **en pantalla, mientras corre**, una linea por generacion con el mejor
+MSE y el tiempo que lleva (`  prof 7  gen  12/100  mejor MSE 0.1102234512  (5.3 s)`). Esas
+lineas salen por stderr, asi que stdout sigue siendo solo el CSV que leen los scripts, y el
+tiempo de imprimirlas se descuenta del cronometro (al final de cada profundidad dice cuanto
+fue: unos 0.04 ms por linea en una terminal de Linux). `--quiet` las apaga.
 
 `--no-fold`, `--no-cut` y `--no-dup` existen porque esas optimizaciones estaban pendientes
 de confirmar con el profesor. Si no las acepta, se apagan sin cambiar el resultado.

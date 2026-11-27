@@ -89,8 +89,15 @@ julia main.jl --export-trees --count=100 --depth=6 --variables=2 --seed=1 [--ful
 | `--batch-pairs=K` | Parejas de padres en memoria a la vez en el benchmark de crossover. `0` (por defecto) = los 10,000; `2500` = 5,000 a la vez |
 | `--generations=G` | Generaciones del GP completo (100 por defecto, lo acordado) |
 | `--history=archivo.csv` | Escribe `depth,generation,best_mse` (17 digitos) fuera del cronometro; la generacion 0 es la poblacion inicial |
+| `--quiet` | No mostrar en pantalla el mejor MSE de cada generacion mientras corre el GP (ver abajo) |
 | `--eval-file` | `MSE<TAB>profundidad<TAB>nodos<TAB>expresion`, MSE con 17 digitos (misma salida que `gp_b --eval-file`) |
 | `--export-trees` | Arboles sin perdida (17 digitos), uno por linea |
+
+`--bench-gp` muestra **en pantalla, mientras corre**, una linea por generacion con el mejor
+MSE y el tiempo que lleva (`  prof 7  gen  12/100  mejor MSE 0.1102234512  (5.3 s)`). Esas
+lineas salen por stderr, asi que stdout sigue siendo solo el CSV que leen los scripts, y el
+tiempo de imprimirlas se descuenta del cronometro (al final de cada profundidad dice cuanto
+fue: unos 0.04 ms por linea en una terminal de Linux). `--quiet` las apaga.
 
 Los benchmarks hacen primero una corrida pequena de calentamiento, para que **la
 compilacion JIT de Julia no se cuente en el tiempo**. La salida CSV tiene las mismas

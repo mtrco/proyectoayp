@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <new>
 #include <random>
@@ -170,6 +171,9 @@ struct GPOptions {
     // que pone un subarbol igual al que quita, o intercambio de raices) recibe el MSE del
     // padre sin evaluarse (--no-dup lo apaga). Mismo arbol => mismo MSE: no cambia el GP.
     bool skip_duplicates = true;
+    // Se llama al terminar cada generacion (0 = poblacion inicial) con su mejor MSE, para
+    // irlo mostrando en vivo. No toca el generador aleatorio: el GP da lo mismo con o sin el.
+    std::function<void(std::size_t generation, double best_mse)> on_generation;
 };
 
 struct GPResult {

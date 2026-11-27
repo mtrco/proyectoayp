@@ -126,6 +126,8 @@ function Invoke-GPBenchmark {
                 $argList = $Pre + @("--bench-gp", "--data=$Data", "--population=$Population", "--depths=$d",
                                     "--generations=$Generations", "--seed=$s",
                                     "--history=$historyTmp") + $GPExtra
+                # El programa muestra en vivo (por stderr) el mejor MSE de cada generacion.
+                Write-Host "  $Impl seed=$s  profundidad $d"
                 $output = @(& $Exe @argList)
                 if ($LASTEXITCODE -ne 0) { throw "$Impl fallo en el GP, semilla $s, profundidad $d" }
                 Add-Rows $output "$out\gp_$Impl.csv" $s

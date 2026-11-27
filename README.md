@@ -17,7 +17,7 @@ eficiencia** de B y C, con sus mediciones.
   implementación por separado, como lo pide el manual (crossover con 10,000 árboles en
   profundidades 7, 9, 10, 12 y 15; GP completo con población 5,000 en profundidades 7, 9 y 12),
   con 100 generaciones, semilla 5 por defecto, un proceso por profundidad y el mejor MSE de
-  cada generación. Comandos, parámetros que se pueden cambiar y cómo leer los resultados:
+  cada generación (en pantalla mientras corre y en un CSV). Comandos, parámetros que se pueden cambiar y cómo leer los resultados:
   [`benchmarks/LEEME_benchmarks.txt`](benchmarks/LEEME_benchmarks.txt).
 - `correr_benchmarks.ps1`: las tres implementaciones juntas, con la verificación cruzada
   entre A, B y C antes de medir (Windows).

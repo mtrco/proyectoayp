@@ -797,6 +797,9 @@ Base.@kwdef struct GPOptions
     early_cut::Bool = true       # corte temprano exacto (--no-cut lo apaga)
     order_by_parent::Bool = true # evaluar primero los hijos de mejores padres (--no-order lo apaga)
     skip_duplicates::Bool = true # un hijo identico a su padre recibe su MSE sin evaluarse (--no-dup)
+    # Funcion (generacion, mejor_mse) llamada al terminar cada generacion (0 = poblacion
+    # inicial), para mostrar el avance en vivo. No toca el generador: el GP da lo mismo.
+    on_generation::Any = nothing
 end
 
 struct GPResult
@@ -941,6 +944,7 @@ function full_gp(data::Dataset, options::GPOptions)
     evaluation_order = Vector{Int}(undef, N)
     for generation in 0:options.generations
         push!(history, minimum(_score, population))
+        options.on_generation === nothing || options.on_generation(generation, history[end])
         generation == options.generations && break
 
         for i in 1:N  # torneo binario repetido
@@ -1377,6 +1381,11 @@ function run_tests(; verbose::Bool=false)
     same_run(r1, r2) = r1.best_fitness_per_generation == r2.best_fitness_per_generation &&
                        expression(r1.best, 17) == expression(r2.best, 17) &&
                        r1.best_fitness === r2.best_fitness
+    seen = Tuple{Int,Float64}[]
+    again = full_gp(exact, GPOptions(population_size=24, max_depth=3, generations=3,
+                                     on_generation=(g, mse) -> push!(seen, (g, mse))))
+    check(first.(seen) == 0:3 && last.(seen) == h, "on_generation da el historial en orden")
+    check(same_run(run, again), "on_generation no cambia el GP")
     for seed in 1:3
         base = GPOptions(population_size=200, max_depth=6, generations=6, seed=seed)
         ref = full_gp(hard, base)

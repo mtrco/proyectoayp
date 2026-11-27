@@ -7,6 +7,7 @@
 #                                   [--variables=2] [--seed=5] [--batch-pairs=0]
 #   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000]
 #                            [--depths=7,9,12] [--generations=100] [--seed=5] [--history=archivo.csv]
+#                            [--quiet]
 #   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
 #        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
 #   julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=5] [--full]
@@ -28,6 +29,7 @@ GP A - Julia, implementacion convencional de alto nivel
                                   [--variables=2] [--seed=5] [--batch-pairs=0]
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000]
                            [--depths=7,9,12] [--generations=100] [--seed=5] [--history=archivo.csv]
+                           [--quiet]
   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
   julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=5] [--full]
 
@@ -36,6 +38,9 @@ GP A - Julia, implementacion convencional de alto nivel
 El manual no fija el numero de generaciones; se acordo usar 100 (valor por defecto, igual que B y C).
 --history=archivo.csv: escribe el mejor MSE de cada generacion (depth,generation,best_mse, 17 digitos),
                fuera del cronometro. La generacion 0 es la poblacion inicial.
+--bench-gp muestra en vivo, por stderr, el mejor MSE de cada generacion y el tiempo que lleva;
+               stdout queda como CSV. El tiempo de imprimir esas lineas se descuenta del
+               cronometro. --quiet las apaga.
 """
 
 const INT_OPTIONS = Set(["trees", "population", "generations", "variables", "seed",
@@ -49,12 +54,14 @@ function parse_args(args)
         "history" => "",
         "trees" => 10000, "population" => 5000, "generations" => 100, "variables" => 2,
         "seed" => 5, "batch-pairs" => 0, "count" => 100, "depth" => 5,
-        "full" => false, "verbose" => false)
+        "full" => false, "verbose" => false, "quiet" => false)
     for arg in args[2:end]
         if arg == "--full"
             o["full"] = true
         elseif arg == "-v"
             o["verbose"] = true
+        elseif arg == "--quiet"
+            o["quiet"] = true
         elseif startswith(arg, "--") && occursin('=', arg)
             key, value = split(arg[3:end], '='; limit=2)
             if key in INT_OPTIONS
@@ -75,6 +82,26 @@ end
 
 parse_depths(text, default) = [parse(Int, strip(s)) for s in split(isempty(text) ? default : text, ',')
                                if !isempty(strip(s))]
+
+# Avance en vivo del GP: el mejor MSE de cada generacion sale por stderr (stdout queda como
+# CSV para los scripts). Lo que tarda imprimirlo se acumula en `paused` y se descuenta del
+# tiempo medido.
+mutable struct Progress
+    io::IO
+    depth::Int
+    generations::Int
+    start::UInt64
+    paused::UInt64
+end
+
+function (p::Progress)(generation::Int, best::Float64)
+    now = time_ns()
+    @printf(p.io, "  prof %d  gen %3d/%d  mejor MSE %.10g  (%.1f s)\n", p.depth, generation,
+            p.generations, best, (now - p.start - p.paused) / 1e9)
+    p.io === devnull || flush(p.io)
+    p.paused += time_ns() - now
+    return nothing
+end
 
 function main(args)
     mode, o = parse_args(args)
@@ -106,17 +133,26 @@ function main(args)
         end
     elseif mode == "--bench-gp"
         data = read_csv(o["data"])
-        full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1))  # calentamiento
+        # Calentamiento (JIT), tambien de la impresion del avance.
+        full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1,
+                                on_generation=Progress(devnull, 3, 1, time_ns(), 0)))
         # Mejor MSE de cada generacion (0 = poblacion inicial), escrito fuera del cronometro.
         history = isempty(o["history"]) ? nothing : open(o["history"], "w")
         history === nothing || println(history, "depth,generation,best_mse")
         println("depth,population,generations,elapsed_seconds,best_mse,best_expression")
         for depth in parse_depths(o["depths"], "7,9,12")
+            progress = o["quiet"] ? nothing : Progress(stderr, depth, o["generations"], 0, 0)
             options = GPOptions(population_size=o["population"], max_depth=depth,
-                                generations=o["generations"], seed=o["seed"])
+                                generations=o["generations"], seed=o["seed"],
+                                on_generation=progress)
             t0 = time_ns()
+            progress === nothing || (progress.start = t0)
             result = full_gp(data, options)
-            elapsed = (time_ns() - t0) / 1e9
+            elapsed = (time_ns() - t0 - (progress === nothing ? 0 : progress.paused)) / 1e9
+            # Cuanto costo imprimir el avance (ya descontado de `elapsed`).
+            progress === nothing ||
+                @printf(stderr, "  prof %d  tiempo de imprimir el avance (descontado): %.3f ms\n",
+                        depth, progress.paused / 1e6)
             @printf("%d,%d,%d,%.9g,%.9g,\"%s\"\n", depth, options.population_size,
                     options.generations, elapsed, result.best_fitness, expression(result.best))
             flush(stdout)

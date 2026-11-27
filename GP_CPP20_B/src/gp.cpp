@@ -650,6 +650,7 @@ GPResult full_gp(const Dataset& data, const GPOptions& options) {
     for (std::size_t generation = 0; generation <= options.generations; ++generation) {
         const Individual& best = *std::min_element(population.begin(), population.end(), better);
         result.best_fitness_per_generation.push_back(best.score);
+        if (options.on_generation) options.on_generation(generation, best.score);
         if (generation == options.generations) break;
 
         // Torneo binario repetido: llenar un pool de N punteros a los ganadores.
@@ -890,6 +891,23 @@ void run_tests() {
     for (std::size_t i = 1; i < run.best_fitness_per_generation.size(); ++i) {
         check(run.best_fitness_per_generation[i] <= run.best_fitness_per_generation[i - 1],
               "elitismo: mejor MSE no aumenta");
+    }
+    {   // on_generation: una llamada por generacion con el mismo MSE del historial,
+        // y la corrida no cambia por tenerlo.
+        GPOptions watched = options;
+        std::vector<std::size_t> seen_generation;
+        std::vector<double> seen_mse;
+        watched.on_generation = [&](std::size_t g, double mse) {
+            seen_generation.push_back(g);
+            seen_mse.push_back(mse);
+        };
+        GPResult again = full_gp(data, watched);
+        check(seen_mse == run.best_fitness_per_generation, "on_generation da el historial");
+        check(seen_generation == std::vector<std::size_t>{0, 1, 2, 3},
+              "on_generation en orden 0..generaciones");
+        check(again.best_fitness_per_generation == run.best_fitness_per_generation &&
+              again.best->expression(17) == run.best->expression(17),
+              "on_generation no cambia el GP");
     }
 
     // --- Optimizaciones: mismo resultado bit a bit -----------------------------

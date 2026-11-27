@@ -485,6 +485,9 @@ Base.@kwdef struct GPOptions
     max_depth::Int = 5
     generations::Int = 5       # el manual NO fija las generaciones
     seed::Int = 42
+    # Funcion (generacion, mejor_mse) llamada al terminar cada generacion (0 = poblacion
+    # inicial), para mostrar el avance en vivo. No toca el generador: el GP da lo mismo.
+    on_generation::Any = nothing
 end
 
 struct GPResult
@@ -523,6 +526,7 @@ function full_gp(data::Dataset, options::GPOptions)
     offspring = Individual[]
     for generation in 0:options.generations
         push!(history, minimum(_score, population))
+        options.on_generation === nothing || options.on_generation(generation, history[end])
         generation == options.generations && break
 
         # 3) Torneo binario repetido: pool de N ganadores (empate -> el primero).
@@ -790,6 +794,12 @@ function run_tests(; verbose::Bool=false)
     check(all(h[i] <= h[i-1] for i in 2:length(h)), "elitismo: el mejor MSE nunca aumenta")
     check(tree_depth(run.best) <= 3, "el mejor arbol respeta max_depth")
     check(run.best_fitness === fitness(run.best, exact), "best_fitness coincide con el arbol")
+    seen = Tuple{Int,Float64}[]
+    again = full_gp(exact, GPOptions(population_size=24, max_depth=3, generations=3,
+                                     on_generation=(g, mse) -> push!(seen, (g, mse))))
+    check(first.(seen) == 0:3 && last.(seen) == h, "on_generation da el historial en orden")
+    check(again.best_fitness_per_generation == h &&
+          expression(again.best, 17) == expression(run.best, 17), "on_generation no cambia el GP")
     r1 = full_gp(exact, GPOptions(seed=11))
     r2 = full_gp(exact, GPOptions(seed=11))
     check(expression(r1.best, 17) == expression(r2.best, 17) &&
