@@ -22,9 +22,8 @@
 #   -Julia "julia"             ejecutable de Julia
 #   -SinPendientes             GP completo sin plegado de constantes, corte temprano ni MSE
 #                              reutilizado de hijos identicos al padre (--no-fold --no-cut
-#                              --no-dup en B y C; en C tambien --no-batch, sin evaluacion por
-#                              lotes). Mismo resultado; usarlo si el profesor no acepta esas
-#                              optimizaciones.
+#                              --no-dup en B y C). Mismo resultado; usarlo si el profesor no
+#                              acepta esas optimizaciones.
 #
 # Regla confirmada: sin paralelismo. Todo corre en un solo hilo.
 #
@@ -167,8 +166,7 @@ if (-not $SoloCrossover) {
                         "--generations=$Generations", "--seed=$s")
             $extra = if ($SinPendientes) { @("--no-fold", "--no-cut", "--no-dup") } else { @() }
             Invoke-GP "B" $B ($common + $extra) $s
-            $extraC = if ($SinPendientes) { $extra + @("--no-batch") } else { $extra }
-            Invoke-GP "C" $Julia ($JuliaFlags + $CMain + $common + $extraC) $s
+            Invoke-GP "C" $Julia ($JuliaFlags + $CMain + $common + $extra) $s
             if ($IncluirA) { Invoke-GP "A" $Julia ($JuliaFlags + $AMain + $common) $s }
         }
     }

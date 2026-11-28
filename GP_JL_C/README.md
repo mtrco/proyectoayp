@@ -8,7 +8,7 @@ protegidas, GP completo, benchmarks y pruebas). No usa paquetes externos.
 
 Probado con Julia 1.13.4: `--test` (1,582 comprobaciones), `tools/cross_check.jl`
 (56,116 comprobaciones contra A, 0 fallos) y `tools/verificar_con_b.jl` (3,280 arboles
-contra B, 0 diferencias). La lista postfija, el cache al reusarse y la evaluacion por bloques
+contra B, 0 diferencias). La lista postfija, el cache al reusarse y las operaciones vectoriales
 (secciones 9 a 11) se agregaron despues y se midieron en un modelo de C en C++; sus pruebas
 suben `--test` a 1,598 comprobaciones y falta correrlas en Julia.
 
@@ -20,7 +20,7 @@ La explicacion detallada, con diagramas, esta en [`../docs/README.md`](../docs/R
 |---|---|---|
 | Compartir subarboles en vez de copiarlos | Valido ("suena a una buena idea") | Si: copia de camino |
 | Toda la poblacion en un solo grafo con cache de resultados | Valido | Si: un grafo en arreglos + cache |
-| Evaluacion por lotes | **No valido** | **Si, por decision del equipo** (seccion 11): la lista postfija se recorre por bloques de 64 filas. `--no-batch` regresa a fila por fila |
+| Evaluacion por lotes | **No valido**; las **operaciones vectoriales** si (aclaracion posterior) | Operaciones vectoriales (seccion 11): cada instruccion de la lista opera sobre un vector de 64 filas. `--no-vector` regresa a fila por fila |
 | Arbol como arreglo postfijo | Valido, pero sin beneficio claro | Si, en los arboles de hasta 512 instrucciones (seccion 9; `--no-tape` la apaga) |
 | Paralelismo | No permitido | Un solo hilo (el recolector de basura tambien: 1 hilo) |
 
@@ -33,7 +33,7 @@ La explicacion detallada, con diagramas, esta en [`../docs/README.md`](../docs/R
 | Metadatos | Se recorren para calcularlos | **Tamano, altura y mayor variable guardados en cada nodo** (O(1)) |
 | Clonar | Copia nodo por nodo | **Innecesario**: un nodo nunca cambia, compartirlo es seguro |
 | Crossover / mutacion | Clonar padres completos e intercambiar | **Copia de camino**: solo los nodos de la raiz al punto de corte |
-| Evaluacion | Recursiva, fila por fila | **Lista postfija por bloques de 64 filas** y **cache** en los nodos grandes y en los chicos que se reusan (fila por fila con `--no-batch`) |
+| Evaluacion | Recursiva, fila por fila | **Lista postfija con operaciones vectoriales de 64 filas** y **cache** en los nodos grandes y en los chicos que se reusan (fila por fila con `--no-vector`) |
 | Memoria | Recolector de basura (A) o asignador propio (B) | **Sin objetos por nodo**: el recolector de basura casi no trabaja |
 
 ### 1. Un grafo en arreglos (`Graph`, `NodeRec`, `Tree`)
@@ -72,8 +72,8 @@ justo despues del padre. El generador se consume igual que en A.
 ### 4. Evaluacion fila por fila con cache de resultados
 
 - Para cada fila i se recorre el arbol recursivamente, como en el manual (o su lista
-  postfija, seccion 9). Por defecto la lista se recorre por bloques de filas (seccion 11);
-  con `--no-batch`, fila por fila.
+  postfija, seccion 9). Por defecto cada instruccion de la lista es una operacion vectorial
+  sobre 64 filas (seccion 11); con `--no-vector`, fila por fila.
 - Los nodos con tamano >= S guardan su resultado en cada fila (en bloques de 8 MB, no en
   un objeto por nodo). Si el cache de un nodo esta completo para el dataset en uso, el
   nodo devuelve el valor guardado sin recorrer su subarbol.
@@ -152,8 +152,8 @@ hijo (en el modelo, unos 13 ns por cada nodo del camino y por fila).
   apila una variable, una constante o el valor guardado en el cache de un nodo, aplica un
   operador, o guarda el tope de la pila en el cache de un nodo.
 - Despues, **para cada fila**, se recorre la lista con una pila chica (`_run_tape`): cada
-  fila pasa por todo el arbol antes de empezar la siguiente. Asi es con `--no-batch`; por
-  defecto la lista se recorre por bloques de 64 filas (seccion 11).
+  fila pasa por todo el arbol antes de empezar la siguiente. Asi es con `--no-vector`; por
+  defecto cada instruccion es una operacion vectorial sobre 64 filas (seccion 11).
 - Un nodo con cache completo es **una sola instruccion**: su subarbol ni siquiera se recorre
   al traducir. Como los hijos comparten casi todo con sus padres, sus listas son cortas.
 - **Hibrido**: si la lista pasa de 512 instrucciones (`TAPE_MAX`), se usa la recursion. En
@@ -195,17 +195,18 @@ hilo. El historial del mejor MSE es identico con y sin los cambios en las tres p
 
 Falta medirlo en Julia: `--no-tape --reuse-min-size=0` da la version anterior para comparar.
 
-### 11. Evaluacion por bloques de filas (`--no-batch` la apaga)
+### 11. Operaciones vectoriales (`--no-vector` las apaga)
 
-> **Ojo:** el profesor dijo que la evaluacion por lotes **no es valida** para C. Se agrego y
-> se dejo encendida por decision del equipo; `--no-batch` da la version fila por fila si el
-> profesor la objeta (mismo resultado, solo cambia el tiempo).
+> El profesor dijo que la evaluacion por lotes no es valida, pero despues aclaro que
+> **operaciones vectoriales** si se permiten. Esto es eso: cada instruccion de la lista es
+> una operacion sobre vectores de 64 filas. `--no-vector` da la version fila por fila
+> (mismo resultado, solo cambia el tiempo).
 
-- La lista postfija (seccion 9) se recorre **una vez por bloque de 64 filas** en vez de una
-  vez por fila (`_run_tape_batch!`, `_fitness_tape_batch`). Cada lugar de la pila es una
-  columna de 64 valores: una instruccion apila la columna de una variable (el dataset
-  guarda sus columnas seguidas, `Dataset.cols`), una constante, o el tramo del cache de un
-  nodo; un operador combina las dos columnas de arriba.
+- Cada instruccion de la lista postfija (seccion 9) es una **operacion vectorial sobre 64
+  filas** (`_run_tape_vector!`, `_fitness_tape_vector`): apilar el vector de una variable
+  (el dataset guarda sus columnas seguidas, `Dataset.cols`), una constante o el tramo del
+  cache de un nodo; sumar, restar, multiplicar o dividir los dos vectores de arriba; sacar
+  raiz al de arriba. Cada lugar de la pila es un vector de 64 valores.
 - El costo de decidir cada instruccion (el que dominaba con la lista fila por fila) se
   reparte entre 64 filas, y los ciclos por columna son sencillos. Por eso aqui tambien
   conviene la lista en los arboles largos: no se usa `TAPE_MAX`.
@@ -218,7 +219,7 @@ Falta medirlo en Julia: `--no-tape --reuse-min-size=0` da la version anterior pa
 Medido en el modelo de C en C++ (mismo protocolo que la seccion 10; historial del mejor
 MSE identico en las tres profundidades):
 
-| Profundidad | Lista fila por fila | Lista por bloques | Pico de RAM |
+| Profundidad | Lista fila por fila | Lista con operaciones vectoriales | Pico de RAM |
 |---|---|---|---|
 | 7 | 17.4 s | 4.7 s (3.7x) | 2.3 GB |
 | 9 | 29.8 s | 8.4 s (3.5x) | 2.6 GB |
@@ -281,7 +282,7 @@ julia --startup-file=no -O3 main.jl --bench-gp --data=..\datos\dataset3a.csv --p
 | `--cache-min-size=K` | Tamano minimo de subarbol que guarda cache (0 = automatico) |
 | `--reuse-min-size=K` | Los subarboles de K nodos o mas (y menores que el anterior) guardan cache la segunda vez que se evaluan (4 por defecto; 0 = no; mismo resultado) |
 | `--no-tape` | Evaluar con la recursion en vez de la lista postfija (mismo resultado) |
-| `--no-batch` | Recorrer la lista postfija fila por fila en vez de por bloques de 64 filas (mismo resultado; no tiene que ver con `--batch-pairs`) |
+| `--no-vector` | Recorrer la lista postfija fila por fila en vez de con operaciones vectoriales de 64 filas (mismo resultado). Antes se llamaba `--no-batch`, que sigue funcionando |
 | `--no-fold` | Sin plegado de constantes (mismo resultado) |
 | `--no-cut` | Sin corte temprano exacto (mismo resultado) |
 | `--no-order` | Evaluar los hijos en orden de creacion (mismo resultado) |
@@ -298,8 +299,8 @@ fue: unos 0.04 ms por linea en una terminal de Linux). `--quiet` las apaga.
 `--no-fold`, `--no-cut` y `--no-dup` existen porque esas optimizaciones estaban pendientes
 de confirmar con el profesor. Si no las acepta, se apagan sin cambiar el resultado.
 `--no-tape` y `--reuse-min-size=0` no son por eso (el profesor ya acepto el arreglo
-postfijo y el cache): sirven para medir cuanto ahorra cada una. `--no-batch` si: el
-profesor dijo que la evaluacion por lotes no es valida (seccion 11).
+postfijo y el cache): sirven para medir cuanto ahorra cada una. Tampoco `--no-vector`:
+el profesor acepto las operaciones vectoriales (seccion 11).
 
 Los benchmarks hacen primero una corrida pequena de calentamiento, para que **la
 compilacion JIT de Julia no se cuente en el tiempo**.

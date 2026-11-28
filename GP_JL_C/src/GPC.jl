@@ -4,8 +4,8 @@ Programacion Genetica (GP) - Implementacion C (alternativa, no convencional), Ju
 Idea: TODA la poblacion vive en UN SOLO GRAFO guardado en arreglos, con subarboles
 compartidos y cache de resultados. Ambas cosas las aprobo el profesor ("compartir
 subarboles en vez de copiarlos" y "toda la poblacion en un solo grafo con cache de
-resultados"). El profesor dijo que la evaluacion por lotes no es valida; el equipo la usa
-(lista postfija por bloques de filas; --no-batch evalua fila por fila). Un solo hilo.
+resultados"). El profesor aprobo evaluar con operaciones vectoriales: cada instruccion de
+la lista opera sobre un vector de 64 filas (--no-vector: fila por fila). Un solo hilo.
 
 1. Un grafo en arreglos. Cada nodo es un registro de 24 bytes (`NodeRec`) dentro de un
    `Vector{NodeRec}`; sus hijos son INDICES de 32 bits, no punteros a objetos. Un arbol
@@ -395,7 +395,7 @@ struct Dataset
     rows::Vector{Vector{Float64}}
     y::Vector{Float64}
     id::Int  # identifica el dataset en el cache de los nodos
-    cols::Matrix{Float64}  # cols[i, j] = x_j de la fila i (para evaluar por bloques)
+    cols::Matrix{Float64}  # cols[i, j] = x_j de la fila i (para las operaciones vectoriales)
     function Dataset(rows::AbstractVector, y::AbstractVector)
         (isempty(rows) || length(rows) != length(y)) &&
             throw(ArgumentError("Dataset vacio o inconsistente"))
@@ -556,8 +556,8 @@ end
 # Evaluacion con lista postfija
 # ---------------------------------------------------------------------------
 # Antes de recorrer las filas, el arbol se traduce UNA vez a una lista lineal de
-# instrucciones en postfijo, y luego esa lista se recorre fila por fila (sigue siendo
-# evaluacion fila por fila, no por lotes). Se ahorran las revisiones que la recursion
+# instrucciones en postfijo, y luego esa lista se recorre fila por fila (o con operaciones
+# vectoriales, mas abajo). Se ahorran las revisiones que la recursion
 # repite en cada nodo y en cada fila (tamano, cache, tipo de hijo), que en los hijos de una
 # generacion cuestan mas que las operaciones mismas. Mismas operaciones y en el mismo
 # orden que la recursion: el MSE es identico bit a bit.
@@ -715,20 +715,20 @@ function _fitness_tape(g::Graph, data::Dataset, id::Int32, rows::Int, width::Int
     return total / rows
 end
 
-# --- Lista postfija por bloques de filas (batch) -----------------------------------
-# En vez de recorrer la lista una vez por fila, se recorre una vez por bloque de BATCH_ROWS
-# filas: cada instruccion trabaja sobre las filas del bloque. Cada lugar de la pila es una
-# columna de BATCH_ROWS valores (la pila es un solo Vector: el lugar p ocupa
-# (p-1)*BATCH_ROWS+1 .. p*BATCH_ROWS). Son las mismas operaciones, y la suma del error se
+# --- Lista postfija con operaciones vectoriales (aprobadas por el profesor) ---------
+# Cada instruccion de la lista es una operacion vectorial sobre VECTOR_ROWS filas: apilar
+# la columna de una variable, sumar dos columnas, etc. Cada lugar de la pila es un vector
+# de VECTOR_ROWS valores (la pila es un solo Vector: el lugar p ocupa
+# (p-1)*VECTOR_ROWS+1 .. p*VECTOR_ROWS). Son las mismas operaciones, y la suma del error se
 # hace fila por fila en el mismo orden, con el mismo corte: el MSE es identico bit a bit.
-# Como el costo de decidir cada instruccion se reparte entre las filas del bloque, aqui
+# Como el costo de decidir cada instruccion se reparte entre las filas del vector, aqui
 # tambien conviene la lista en los arboles largos: no se usa TAPE_MAX.
-const BATCH_ROWS = 64
+const VECTOR_ROWS = 64
 
-function _run_tape_batch!(tape::Vector{TapeOp}, stack::Vector{Float64},
+function _run_tape_vector!(tape::Vector{TapeOp}, stack::Vector{Float64},
                           blocks::Vector{Vector{Float64}}, cols::Matrix{Float64},
                           start::Int, count::Int)
-    B = BATCH_ROWS
+    B = VECTOR_ROWS
     sp = 0
     @inbounds for op in tape
         c = op.code
@@ -792,19 +792,19 @@ function _run_tape_batch!(tape::Vector{TapeOp}, stack::Vector{Float64},
     return nothing
 end
 
-# Mismo ciclo de filas que fitness, pero calculando las predicciones por bloques.
-function _fitness_tape_batch(g::Graph, data::Dataset, id::Int32, rows::Int,
+# Mismo ciclo de filas que fitness, con las predicciones de VECTOR_ROWS filas a la vez.
+function _fitness_tape_vector(g::Graph, data::Dataset, id::Int32, rows::Int,
                              stack_size::Int, cut::Float64)::Float64
     tape = TAPE
     _resolve_stores!(tape, g, id, rows)
     stack = TAPE_STACK
-    length(stack) < BATCH_ROWS * stack_size && resize!(stack, BATCH_ROWS * stack_size)
+    length(stack) < VECTOR_ROWS * stack_size && resize!(stack, VECTOR_ROWS * stack_size)
     blocks, cols, y = g.blocks, data.cols, data.y
     total = 0.0
-    for start in 0:BATCH_ROWS:(rows - 1)
-        count = min(BATCH_ROWS, rows - start)
-        _run_tape_batch!(tape, stack, blocks, cols, start, count)
-        @inbounds for k in 1:count  # stack[1:count] = prediccion de las filas del bloque
+    for start in 0:VECTOR_ROWS:(rows - 1)
+        count = min(VECTOR_ROWS, rows - start)
+        _run_tape_vector!(tape, stack, blocks, cols, start, count)
+        @inbounds for k in 1:count  # stack[1:count] = prediccion de las filas del vector
             difference = y[start + k] - stack[k]
             squared = difference * difference
             if !isfinite(squared)
@@ -833,15 +833,15 @@ mismo orden de suma que A y B: el MSE es identico bit a bit.
 Con `tape = true`, el arbol se traduce antes a una lista postfija (si no pasa de TAPE_MAX
 instrucciones) y se recorre esa lista en cada fila. Con `reuse_min_size = K > 0`, los
 subarboles de K nodos o mas (y menos de cache_min_size) guardan cache la segunda vez que
-se evaluan. Con `batch = true` (y `tape = true`), la lista se recorre por bloques de
-BATCH_ROWS filas en vez de fila por fila, sin limite de largo. Ninguna cambia el MSE.
+se evaluan. Con `vector = true` (y `tape = true`), la lista se recorre con operaciones
+vectoriales de VECTOR_ROWS filas, sin limite de largo. Ninguna cambia el MSE.
 
 Con `cut` finito, deja de evaluar en cuanto el MSE parcial (suma/n) supera `cut`: las
 filas restantes solo pueden sumar, asi que el MSE final seria mayor; devuelve +Inf.
 """
 function fitness(t::Tree, data::Dataset, cache_min_size::Integer=DEFAULT_CACHE_MIN_SIZE;
                  cut::Float64=Inf, tape::Bool=false, reuse_min_size::Integer=0,
-                 batch::Bool=false)::Float64
+                 vector::Bool=false)::Float64
     g = _track!(t.g)
     root = g.nodes[t.i]
     width = nvariables(data)
@@ -856,7 +856,7 @@ function fitness(t::Tree, data::Dataset, cache_min_size::Integer=DEFAULT_CACHE_M
         reuse = cache_min_size >= NO_CACHE ? 0 : Int(reuse_min_size)
         empty!(TAPE)
         _compile!(TAPE, g, t.i, id, S, reuse)
-        batch && return _fitness_tape_batch(g, data, id, rows, Int(root.height) + 2, cut)
+        vector && return _fitness_tape_vector(g, data, id, rows, Int(root.height) + 2, cut)
         length(TAPE) <= TAPE_MAX &&
             return _fitness_tape(g, data, id, rows, width, Int(root.height) + 2, cut)
     end
@@ -1093,7 +1093,7 @@ Base.@kwdef struct GPOptions
     skip_duplicates::Bool = true # un hijo identico a su padre recibe su MSE sin evaluarse (--no-dup)
     tape::Bool = true            # evaluar con lista postfija (--no-tape la apaga)
     reuse_min_size::Int = 4      # subarboles de este tamano o mas guardan cache al reusarse (0 = no)
-    batch::Bool = true           # lista postfija por bloques de filas (--no-batch: fila por fila)
+    vector::Bool = true          # operaciones vectoriales sobre la lista (--no-vector: fila por fila)
     # Funcion (generacion, mejor_mse) llamada al terminar cada generacion (0 = poblacion
     # inicial), para mostrar el avance en vivo. No toca el generador: el GP da lo mismo.
     on_generation::Any = nothing
@@ -1141,9 +1141,9 @@ function _record_best!(h::Vector{Float64}, s::Float64, cap::Int)
 end
 
 function _score_child!(heap::Vector{Float64}, t::Tree, data::Dataset, S::Int, half::Int,
-                       early_cut::Bool, tape::Bool, reuse::Int, batch::Bool)
+                       early_cut::Bool, tape::Bool, reuse::Int, vector::Bool)
     cut = (early_cut && length(heap) == half) ? @inbounds(heap[1]) : Inf
-    s = fitness(t, data, S; cut=cut, tape=tape, reuse_min_size=reuse, batch=batch)
+    s = fitness(t, data, S; cut=cut, tape=tape, reuse_min_size=reuse, vector=vector)
     _record_best!(heap, s, half)
     return s
 end
@@ -1196,7 +1196,7 @@ function _copy_into!(newg::Graph, g::Graph, n::Int32, map::Vector{Int32}, rows::
     map[n] = m
     return m
 end
-
+##¡full_gp
 function full_gp(data::Dataset, options::GPOptions)
     N = options.population_size
     nvariables(data) > 0 || throw(ArgumentError("Se necesita un dataset con variables"))
@@ -1225,7 +1225,7 @@ function full_gp(data::Dataset, options::GPOptions)
         root = _grow!(g, max_depth, nvars, rng, true)
         push!(population, Individual(fitness(Tree(g, root), data, S; tape=options.tape,
                                              reuse_min_size=options.reuse_min_size,
-                                             batch=options.batch), root))
+                                             vector=options.vector), root))
     end
 
     history = Float64[]
@@ -1293,7 +1293,7 @@ function full_gp(data::Dataset, options::GPOptions)
         for i in evaluation_order
             child_score[i] = isnan(copy_score[i]) ?
                 _score_child!(heap, Tree(g, children[i]), data, S, half, options.early_cut,
-                              options.tape, options.reuse_min_size, options.batch) :
+                              options.tape, options.reuse_min_size, options.vector) :
                 _score_copy!(heap, copy_score[i], half, options.early_cut)
         end
         for i in 1:N
@@ -1644,37 +1644,37 @@ function run_tests(; verbose::Bool=false)
     end
     check(tape_bad == 0, "lista postfija y cache al reusarse == referencia, bit a bit")
 
-    # --- Lista postfija por bloques de filas: mismo MSE bit a bit ------------------
-    # 150 filas (dos bloques llenos y uno de 22) y 40 (un bloque incompleto); se alterna con
+    # --- Lista postfija con operaciones vectoriales: mismo MSE bit a bit -----------
+    # 150 filas (dos vectores llenos y uno de 22) y 40 (uno incompleto); se alterna con
     # la recursion y la lista fila por fila sobre el mismo grafo; arboles grandes (sin
     # TAPE_MAX), arboles que llegan a Inf o NaN, corte temprano e hijos.
-    batch_bad = 0
+    vector_bad = 0
     for graph in (Graph(), Graph(fold=false))
         trees = [grow_random(1 + t % 9, 3, rng; graph=graph) for t in 1:120]
         append!(trees, [grow_full(9, 3, rng; graph=graph) for _ in 1:4])
         for t in trees, S in (NO_CACHE, 1, 16), reuse in (0, 4)
             ref = _reference_mse(t, xs, ys)
             for _ in 1:2
-                fitness(t, hard, S; tape=true, reuse_min_size=reuse, batch=true) === ref ||
-                    (batch_bad += 1)
-                fitness(t, hard, S; tape=true, reuse_min_size=reuse) === ref || (batch_bad += 1)
+                fitness(t, hard, S; tape=true, reuse_min_size=reuse, vector=true) === ref ||
+                    (vector_bad += 1)
+                fitness(t, hard, S; tape=true, reuse_min_size=reuse) === ref || (vector_bad += 1)
             end
-            fitness(t, other, S; tape=true, reuse_min_size=reuse, batch=true) ===
-                _reference_mse(t, xs[1:40], ys[41:80]) || (batch_bad += 1)
+            fitness(t, other, S; tape=true, reuse_min_size=reuse, vector=true) ===
+                _reference_mse(t, xs[1:40], ys[41:80]) || (vector_bad += 1)
         end
         for t in trees
             exact_mse = _reference_mse(t, xs, ys)
             cut = 10.0^rand(rng, -2:4)
-            s = fitness(t, hard, 4; cut=cut, tape=true, reuse_min_size=2, batch=true)
+            s = fitness(t, hard, 4; cut=cut, tape=true, reuse_min_size=2, vector=true)
             (isinf(s) ? (exact_mse > cut || isinf(exact_mse)) : (s === exact_mse && s <= cut)) ||
-                (batch_bad += 1)
+                (vector_bad += 1)
         end
         for _ in 1:300
             a, b = trees[rand(rng, 1:length(trees))], trees[rand(rng, 1:length(trees))]
             c, d = crossover(a, b, rng)
             for t in (c, d, mutation(a, 3, rng))
-                fitness(t, hard, 16; tape=true, reuse_min_size=4, batch=true) ===
-                    _reference_mse(t, xs, ys) || (batch_bad += 1)
+                fitness(t, hard, 16; tape=true, reuse_min_size=4, vector=true) ===
+                    _reference_mse(t, xs, ys) || (vector_bad += 1)
             end
         end
     end
@@ -1684,10 +1684,10 @@ function run_tests(; verbose::Bool=false)
     end
     for text in ("sqrt(($blowup - $blowup))", "($blowup - $blowup)", "sqrt((x1 * x2))")
         t = parse_expression(text; graph=_track!(Graph()))
-        fitness(t, hard, 1; tape=true, batch=true) === _reference_mse(t, xs, ys) ||
-            (batch_bad += 1)
+        fitness(t, hard, 1; tape=true, vector=true) === _reference_mse(t, xs, ys) ||
+            (vector_bad += 1)
     end
-    check(batch_bad == 0, "lista postfija por bloques de filas == referencia, bit a bit")
+    check(vector_bad == 0, "lista postfija vectorial == referencia, bit a bit")
     nested = parse_expression("((x1 + x2) * (x2 - 0.5))"; graph=_track!(Graph()))
     fitness(nested, hard, 16; tape=true, reuse_min_size=2)  # primera vez: solo se marcan
     empty!(TAPE)
@@ -1797,8 +1797,8 @@ function run_tests(; verbose::Bool=false)
                                                     seed=seed, tape=false))),
               "la lista postfija no altera el GP")
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
-                                                    seed=seed, batch=false))),
-              "evaluar por bloques de filas no altera el GP")
+                                                    seed=seed, vector=false))),
+              "las operaciones vectoriales no alteran el GP")
         check(same_run(ref, full_gp(hard, GPOptions(population_size=200, max_depth=6, generations=6,
                                                     seed=seed, reuse_min_size=0))),
               "el cache al reusarse no altera el GP")

@@ -205,8 +205,8 @@ cambiar la representación clásica.
 profesor: "toda la población en un solo grafo con caché de resultados"). Cada nodo es un
 registro de 24 bytes; los hijos son posiciones en el arreglo. Un árbol es solo el número de
 su raíz, y los individuos comparten subárboles. Para evaluar, cada árbol se traduce una vez
-a una lista postfija (C12) que se recorre por bloques de 64 filas (C14; fila por fila con
-`--no-batch`).
+a una lista postfija (C12) cuyas instrucciones son operaciones vectoriales sobre 64 filas
+(C14; fila por fila con `--no-vector`).
 
 ![Población en un solo grafo](img/13_grafo.svg)
 
@@ -246,7 +246,7 @@ explica por qué). "Nuevo" = agregado en esta revisión; el resto ya existía.
 | C11 | **Compactación del grafo** en corridas largas | C | memoria | memoria acotada | nuevo |
 | C12 | **Lista postfija** (híbrida: hasta 512 instrucciones) | C | recorrer el árbol en cada fila | con C13: 1.8-2.2× del GP (modelo en C++) | nuevo |
 | C13 | **Cache al reusarse** en subárboles chicos (4 ≤ tamaño < S) | C | subárboles chicos recalculados | (con C12) | nuevo |
-| C14 | **Lista postfija por bloques de 64 filas** (evaluación por lotes) | C | decidir cada instrucción en cada fila | 3.5-4.4× sobre C12 + C13 (modelo en C++) | nuevo; **el profesor dijo que no es válida**; `--no-batch` la apaga |
+| C14 | **Operaciones vectoriales** sobre la lista postfija (vectores de 64 filas) | C | decidir cada instrucción en cada fila | 3.5-4.4× sobre C12 + C13 (modelo en C++) | nuevo; aceptado por el profesor como operaciones vectoriales; `--no-vector` lo apaga |
 | A1 | Hijos con una unión concreta de tipos | A, C | despacho dinámico | — | existente |
 | P1 | Calentamiento JIT, liberación fuera del cronómetro | todas | medición justa | — | existente |
 
@@ -514,8 +514,8 @@ nodo del camino, revisa su cache y llama a la función del hijo (en el modelo, u
   cache de un nodo. Un nodo con cache completo es una sola instrucción: su subárbol ni
   siquiera se recorre.
 - Después, **para cada fila**, se recorre la lista con una pila: cada fila pasa por todo el
-  árbol antes de empezar la siguiente. Así es con `--no-batch`; por defecto, C14 recorre la
-  lista por bloques de 64 filas.
+  árbol antes de empezar la siguiente. Así es con `--no-vector`; por defecto (C14), cada
+  instrucción es una operación vectorial sobre 64 filas.
 - **Híbrido**: con más de 512 instrucciones (`TAPE_MAX`) se usa la recursión. En la
   población inicial de profundidad 12 hay árboles de miles de nodos sin nada en cache; con
   listas tan largas el procesador ya no adivina la siguiente instrucción y la lista fue 2.5
@@ -547,14 +547,14 @@ El modelo usa las mismas estructuras y la misma lógica que C (calibrado: 37.5 s
 es idéntico con y sin C12 y C13 en las tres profundidades. Falta medirlo en Julia
 (`--no-tape --reuse-min-size=0` da la versión anterior).
 
-### C14. Lista postfija por bloques de filas (`_run_tape_batch!`, `_fitness_tape_batch`; `--no-batch` la apaga) — nuevo
+### C14. Operaciones vectoriales (`_run_tape_vector!`, `_fitness_tape_vector`; `--no-vector` las apaga) — nuevo
 
-> **El profesor dijo que la evaluación por lotes no es válida para C.** Se agregó y quedó
-> encendida por decisión del equipo; `--no-batch` regresa a fila por fila con el mismo
-> resultado.
+> El profesor dijo que la evaluación por lotes no es válida, pero aclaró que las
+> **operaciones vectoriales** sí se permiten. `--no-vector` regresa a fila por fila con el
+> mismo resultado.
 
-La lista de C12 se recorre una vez por bloque de 64 filas en vez de una vez por fila. Cada
-lugar de la pila es una columna de 64 valores: una variable apila su columna (el dataset
+Cada instrucción de la lista de C12 es una operación vectorial sobre 64 filas. Cada
+lugar de la pila es un vector de 64 valores: una variable apila su columna (el dataset
 guarda las columnas seguidas, `Dataset.cols`), un nodo con caché apila su tramo y un
 operador combina las dos columnas de arriba. Decidir cada instrucción, lo que dominaba en
 C12, se paga una vez por bloque; por eso no hace falta `TAPE_MAX`. La suma del error sigue
@@ -563,7 +563,7 @@ fila por fila, en el mismo orden y con el mismo corte: el MSE es idéntico bit a
 | Modelo de C en C++, dataset3a, población 5,000, 100 generaciones | Prof. 7 | Prof. 9 | Prof. 12 |
 |---|---|---|---|
 | C12 + C13 (lista fila por fila) | 17.4 s | 29.8 s | 66.0 s |
-| C12 + C13 + C14 (por bloques) | 4.7 s | 8.4 s | 15.0 s |
+| C12 + C13 + C14 (operaciones vectoriales) | 4.7 s | 8.4 s | 15.0 s |
 
 Mismo historial del mejor MSE en las tres profundidades. Falta medirlo en Julia.
 
@@ -581,7 +581,7 @@ liberar hijos (cada 16 cruces) quedan fuera del cronómetro; un solo hilo.
 
 | Idea | Por qué no |
 |---|---|
-| Evaluación por lotes en A | El profesor dijo que no es válida (en C); el equipo la usa en B y en C (C14), no en A |
+| Operaciones vectoriales en A | Se pueden (el profesor las aceptó), pero A se deja como referencia sencilla; B y C (C14) sí las usan |
 | Paralelismo | **Prohibido** por el profesor |
 | Lista postfija también en árboles largos | 2.5× más lenta que la recursión con miles de instrucciones (por eso C12 es híbrida) |
 | Cache "perezoso" en todos los nodos (guardar hasta el segundo uso, también los ≥ S) | Medido en un modelo: mucho peor en prof. 12 (4.8 → 6.2 s); C13 lo usa solo en los chicos |
@@ -593,7 +593,7 @@ liberar hijos (cada 16 cruces) quedan fuera del cronómetro; un solo hilo.
 | Evaluador híbrido en B (con saltos si el árbol es chico) | Sin ganancia consistente medida |
 | Diferir la recolección de basura fuera del cronómetro del GP | Sería esconder trabajo, no ahorrarlo |
 | Evaluación incremental con propagación fallida (Langdon) | C ya recalcula solo el camino nuevo; lo que cuesta son los subárboles chicos cerca del corte, que esto no evita |
-| Evaluar en SIMD varias filas, hilos, GPU | Son evaluación por lotes o paralelismo: prohibidos |
+| Hilos, GPU | Paralelismo: prohibido. (Las operaciones vectoriales de un solo hilo sí se aceptaron: C14 y B) |
 | Optimizar constantes por búsqueda local; agregar seno | Mejoraría mucho el MSE, pero cambia el algoritmo y los operadores del manual |
 
 **Pendientes de medir o de preguntar al profesor:** medir C12 y C13 en Julia, y guardar en
@@ -613,7 +613,7 @@ cambia qué operaciones se hacen ni en qué orden se suman las filas:
 - el plegado calcula una vez el mismo valor que se calcularía en cada fila;
 - el cache guarda valores, no los cambia (también el que se guarda al reusarse);
 - la lista postfija hace las mismas operaciones, en el mismo orden, que la recursión, y
-  recorrerla por bloques de filas solo cambia cuándo se calcula cada fila, no cómo;
+  hacerlo con operaciones vectoriales solo cambia cuándo se calcula cada fila, no cómo;
 - el corte temprano solo afecta a hijos que de todos modos se descartan;
 - un hijo idéntico a su padre tiene el mismo MSE que su padre;
 - el orden en que se evalúan los hijos no cambia el MSE de ninguno;
@@ -740,9 +740,9 @@ La medida usual es cuántos nodos por fila se evalúan por segundo (GPops/s):
 | GPquick (Langdon) | 139 × 10⁹ con 48 hilos | SIMD AVX-512 y hilos |
 | DEAP (Python) | ~6 × 10⁴ nodos/s (comparación de easyFastGP) | intérprete en Python |
 
-B está a unas 2 veces de los sistemas por lotes y a unas 15 de los SIMD de un núcleo: esa
-distancia es la esperada, porque la evaluación por lotes y el paralelismo están
-prohibidos. Frente a herramientas en Python está varios órdenes de magnitud arriba. C se
+Esta tabla es de la versión de B que evaluaba fila por fila: estaba a unas 2 veces de los
+sistemas por lotes y a unas 15 de los SIMD de un núcleo. Desde entonces B y C usan
+operaciones vectoriales (aceptadas por el profesor); el paralelismo sigue prohibido. Frente a herramientas en Python está varios órdenes de magnitud arriba. C se
 acerca a los SIMD de un núcleo sin usar SIMD. Fuentes: de Melo et al., "A MIMD interpreter
 for Genetic Programming" (EvoApplications 2020); Langdon y Banzhaf, "Faster Genetic
 Programming GPquick via multicore and Advanced Vector Extensions" (2019); documentación de

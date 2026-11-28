@@ -21,9 +21,8 @@
 #   -ExtraGP "--opcion"      opciones extra para el GP completo (por ejemplo "--no-dup")
 #   -Generations 100         generaciones del GP completo
 #   -SoloCrossover / -SoloGP correr solo una parte
-#   -SinPendientes           GP sin plegado de constantes, corte temprano, MSE reutilizado de
-#                            hijos identicos a su padre ni evaluacion por lotes (--no-batch,
-#                            que el profesor dijo que no es valida en C). Mismo resultado.
+#   -SinPendientes           GP sin plegado de constantes, corte temprano ni reutilizar el MSE
+#                            de hijos identicos a su padre (mismo resultado)
 #   -ParesEnMemoria -1       -1 = 10,000 a la vez (C ocupa ~1.3 GB); 2500 = 5,000 a la vez
 #   -Julia julia             ejecutable de Julia
 #   -Data ruta\dataset.csv   dataset del GP completo
@@ -57,8 +56,8 @@ $flags = @("--startup-file=no", "-O3")
 $extra = @()
 $pendientes = "activos"
 if ($SinPendientes) {
-    $extra += "--no-fold", "--no-cut", "--no-dup", "--no-batch"
-    $pendientes = "apagados (--no-fold --no-cut --no-dup --no-batch)"
+    $extra += "--no-fold", "--no-cut", "--no-dup"
+    $pendientes = "apagados (--no-fold --no-cut --no-dup)"
 }
 $info = @(
     "Implementacion: C (Julia, no convencional, competencia 2: mas rapida no convencional)"

@@ -19,7 +19,7 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
   julia main.jl --bench-gp [--data=dataset.csv] [--population=5000] [--depths=7,9,12]
                            [--generations=100] [--seed=S] [--history=archivo.csv]
                            [--cache-mb=1024] [--cache-min-size=0] [--reuse-min-size=4] [--no-tape]
-                           [--no-batch] [--no-fold] [--no-cut] [--no-order] [--no-dup] [--quiet]
+                           [--no-vector] [--no-fold] [--no-cut] [--no-order] [--no-dup] [--quiet]
   julia main.jl --eval-file --file=arboles.txt [--data=dataset.csv]
        Una expresion por linea -> MSE(17 digitos)<TAB>profundidad<TAB>nodos<TAB>expresion
   julia main.jl --export-trees [--count=100] [--depth=5] [--variables=2] [--seed=S] [--full]
@@ -33,9 +33,9 @@ GP C - Julia, implementacion alternativa (toda la poblacion en un solo grafo en 
                   (4 por defecto; 0 = no).
 --no-tape:        evaluar recorriendo el arbol en cada fila (recursion) en vez de traducirlo
                   antes a una lista postfija.
---no-batch:       recorrer la lista postfija fila por fila. Por defecto se recorre por bloques
-                  de 64 filas (evaluacion por lotes, como B). Con --no-tape no hay lista y
-                  siempre es fila por fila. No tiene que ver con --batch-pairs.
+--no-vector:      recorrer la lista postfija fila por fila. Por defecto cada instruccion es una
+                  operacion vectorial sobre 64 filas (aprobada por el profesor). Con --no-tape
+                  no hay lista y siempre es fila por fila. (Antes se llamaba --no-batch.)
 --history:        archivo CSV con el mejor MSE de cada generacion (depth,generation,best_mse,
                   17 digitos), escrito fuera del cronometro. La generacion 0 es la poblacion inicial.
 --quiet:          no mostrar en vivo (por stderr) el mejor MSE de cada generacion. Sin --quiet,
@@ -63,7 +63,7 @@ function parse_args(args)
         "history" => "",
         "trees" => 10000, "population" => 5000, "generations" => 100, "variables" => 2,
         "seed" => -1, "batch-pairs" => 0, "count" => 100, "depth" => 5,
-        "cache-mb" => 1024, "cache-min-size" => 0, "reuse-min-size" => 4, "tape" => true, "batch" => true,
+        "cache-mb" => 1024, "cache-min-size" => 0, "reuse-min-size" => 4, "tape" => true, "vector" => true,
         "full" => false, "verbose" => false,
         "fold" => true, "cut" => true, "order" => true, "dup" => true, "quiet" => false)
     for arg in args[2:end]
@@ -79,8 +79,8 @@ function parse_args(args)
             o["dup"] = false
         elseif arg == "--no-tape"
             o["tape"] = false
-        elseif arg == "--no-batch"
-            o["batch"] = false
+        elseif arg == "--no-vector" || arg == "--no-batch"
+            o["vector"] = false
         elseif arg == "-v"
             o["verbose"] = true
         elseif arg == "--quiet"
@@ -174,7 +174,7 @@ function main(args)
         # postfija se usa en los arboles grandes (la poblacion inicial en profundidad 12).
         for tape in (o["tape"], false)
             full_gp(data, GPOptions(population_size=8, max_depth=3, generations=1, tape=tape,
-                                    reuse_min_size=o["reuse-min-size"], batch=o["batch"],
+                                    reuse_min_size=o["reuse-min-size"], vector=o["vector"],
                                     on_generation=Progress(devnull, 3, 1, time_ns(), 0)))
         end
         # Mejor MSE de cada generacion (0 = poblacion inicial), escrito fuera del cronometro.
@@ -189,7 +189,7 @@ function main(args)
                                 fold_constants=o["fold"], early_cut=o["cut"],
                                 order_by_parent=o["order"], skip_duplicates=o["dup"],
                                 tape=o["tape"], reuse_min_size=o["reuse-min-size"],
-                                batch=o["batch"], on_generation=progress)
+                                vector=o["vector"], on_generation=progress)
             GC.gc()  # memoria de la corrida anterior, fuera del cronometro
             t0 = time_ns()
             progress === nothing || (progress.start = t0)

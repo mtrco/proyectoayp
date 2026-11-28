@@ -93,8 +93,7 @@ por si el profesor no acepta alguna:
   Si pide...                            Agrega...
   ------------------------------------  ----------------------------------------------
   Quitar todas las dudosas              -SinPendientes
-                                        (= --no-fold --no-cut --no-dup; en C
-                                        tambien --no-batch)
+                                        (= --no-fold --no-cut --no-dup)
   Sin plegado de constantes             -ExtraGP "--no-fold"
   Sin corte temprano                    -ExtraGP "--no-cut"
   Evaluar hijos en orden de creación    -ExtraGP "--no-order"
@@ -112,10 +111,9 @@ Solo C (caché de resultados del GP; mismo resultado):
   Sin lista postfija (recursión)        -ExtraGP "--no-tape"
   Sin caché al reusarse                 -ExtraGP "--reuse-min-size=0"
     (subárboles chicos)                 (por defecto 4)
-  Sin evaluación por lotes (C)          -ExtraGP "--no-batch"
-    (el profesor dijo que no es válida;  (C evalúa por bloques de 64 filas por defecto)
-    mismo resultado)
-  Versión anterior de C, para comparar  -ExtraGP "--no-batch","--no-tape","--reuse-min-size=0"
+  C sin operaciones vectoriales         -ExtraGP "--no-vector"
+    (fila por fila; mismo resultado)    (aceptadas por el profesor; solo para medir)
+  Versión anterior de C, para comparar  -ExtraGP "--no-vector","--no-tape","--reuse-min-size=0"
 
   --no-tape y --reuse-min-size no son "dudosas" (el profesor aceptó el arreglo postfijo
   y el caché): no entran en -SinPendientes; sirven para medir cuánto ahorran.
@@ -169,7 +167,7 @@ Notas:
 - --history=archivo.csv escribe el mejor MSE de cada generación, después de detener el
   cronómetro.
 - En B y C se pueden agregar al GP --no-fold, --no-cut, --no-order y --no-dup;
-  en C, también --cache-mb=M, --cache-min-size=K, --reuse-min-size=K, --no-tape y --no-batch.
+  en C, también --cache-mb=M, --cache-min-size=K, --reuse-min-size=K, --no-tape y --no-vector.
 - La ayuda completa de cada programa: gp_b.exe --help, julia GP_JL_C\main.jl --help,
   julia GP_JL_A\main.jl --help.
 
@@ -199,7 +197,7 @@ Notas:
   misma semilla hace otra corrida: su MSE es distinto, pero el MSE de un mismo árbol
   coincide bit a bit con el de A y C.
 - Apagar optimizaciones (--no-fold, --no-cut, --no-order, --no-dup, caché de C,
-  --no-tape, --reuse-min-size=0, --no-batch) no cambia ningún MSE; solo el tiempo.
+  --no-tape, --reuse-min-size=0, --no-vector) no cambia ningún MSE; solo el tiempo.
 - La semilla sí cambia el tiempo: en C, con 10 semillas, la suma de las tres
   profundidades fue de 199 s (semilla 5) a 267 s.
 - dataset3a es sin(sqrt(x1² + x2²)). Sin seno entre los operadores del manual, el MSE

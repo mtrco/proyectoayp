@@ -30,7 +30,7 @@ exacto), `--no-order` (evaluar primero los hijos de mejores padres) y `--no-dup`
 idénticos a su padre reciben su MSE sin evaluarse). Los scripts de benchmark las apagan
 con `-SinPendientes`. Solo en C: `--no-tape` (evaluar con la recursión en vez de la lista
 postfija) y `--reuse-min-size=0` (sin cache en los subárboles chicos que se reusan); el
-profesor ya aceptó ambas ideas, así que no entran en `-SinPendientes`. C también recorre
-la lista por bloques de 64 filas (evaluación por lotes, que el profesor dijo que no es
-válida; se dejó por decisión del equipo): `--no-batch` la apaga con el mismo resultado. El detalle y las mediciones están en
+profesor ya aceptó ambas ideas, así que no entran en `-SinPendientes`. En C, cada
+instrucción de la lista es una operación vectorial sobre 64 filas (el profesor aceptó las
+operaciones vectoriales): `--no-vector` la apaga con el mismo resultado. El detalle y las mediciones están en
 [`docs/README.md`](docs/README.md#5-catálogo-de-técnicas-de-eficiencia).
